@@ -1,0 +1,1 @@
+/home/tyf/code/datasets/NUAA-SIRST/50_50/test.txt

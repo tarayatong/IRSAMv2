@@ -53,12 +53,14 @@ You can train or test the model using the provided scripts. For example:
 ```bash
 # Training example
 python training.py --batch_size 12 --image_size 256 --lr 1e-2 --dataset NUDT-SIRST --save_dir ./checkpoints/NUDT-SIRST --gpu 0
+python training.py --batch_size 8 --image_size 256 --lr 1e-2 --dataset NUAA-SIRST --save_dir ./checkpoints/NUAA-SIRST --gpu 1
 
 # Distributed Data Parallel Training example
 CUDA_VISIBLE_DEVICES="0, 1, 2, 3" torchrun --nproc_per_node=4 --nnodes=1 training.py --batch_size 12 --image_size 256 --lr 1e-2 --dataset NUDT-SIRST --save_dir ./checkpoints/NUDT-SIRST --use_ddp
 
 # Testing example
 python testing.py --dataset NUDT-SIRST --image_size 256 --weights ./checkpoints/NUDT-SIRST.pt --device cuda:0
+python testing.py --dataset NUAA-SIRST --image_size 256 --weights ./checkpoints/NUAA-SIRST/checkpoint_epoch_255.pt --device cuda:0
 ```
 
 

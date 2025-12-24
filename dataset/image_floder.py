@@ -81,6 +81,10 @@ def PadMask(img, times=32):
     return img
 
 
+def to_float_div_255(x):
+    return x.float() / 255.0
+
+
 # Modify from https://github.com/xdFai/SCTransNet/blob/main/dataset.py and https://github.com/YeRen123455/Infrared-Small-Target-Detection
 class ImageFolder(Dataset):
     def __init__(
@@ -107,7 +111,7 @@ class ImageFolder(Dataset):
         self.train_transform = transforms.Compose(
             [
                 transforms.ToTensor(),
-                transforms.Lambda(lambda x: x.float() / 255.0),
+                transforms.Lambda(to_float_div_255),
             ]
         )
 
@@ -153,13 +157,13 @@ class ImageFolder(Dataset):
                 image_path = os.path.join(path, data_set, "images", f"{data}.jpg")
             else:
                 image_path = os.path.join(path, data_set, "images", f"{data}.png")
-            if data_set == "NUAA":
+            if data_set == "NUAA-SIRST":
                 mask_path = os.path.join(path, data_set, "masks", f"{data}_pixels0.png")
             elif data_set == "SIRST-UAVB":
                 mask_path = os.path.join(path, data_set, "masks", f"{data}.jpg")
             else:
                 mask_path = os.path.join(path, data_set, "masks", f"{data}.png")
-
+            
             self.images.append(image_path)
             self.masks.append(mask_path)
 

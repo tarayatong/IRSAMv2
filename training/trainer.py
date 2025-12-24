@@ -157,8 +157,8 @@ class Trainer:
         avg_loss = total_loss / total_samples
         if self.scheduler is not None:
             self.scheduler.step()
-        # if self.rank == 0:
-        #     logger.info(f"[Train][Epoch {self.epoch}] avg_loss={avg_loss:.6f}")
+        if self.rank == 0:
+            logger.info(f"[Train][Epoch {self.epoch}] avg_loss={avg_loss:.6f}")
         return avg_loss
 
     @torch.no_grad()

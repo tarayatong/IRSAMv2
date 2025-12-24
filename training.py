@@ -40,7 +40,7 @@ def main():
     )
     parser.add_argument(
         "--data_path",
-        default="./dataset",
+        default="./dataset/set_configs",
         type=str,
         help="Path to dataset root directory",
     )
