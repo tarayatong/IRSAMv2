@@ -21,10 +21,11 @@ import torch.distributed as dist
 from torch.utils.data import DataLoader, DistributedSampler
 from loguru import logger
 import enlighten
+from sam_spl.alpha_loss import AlphaLoss
 
 # Import metricWrapper for type hints
 from .metrics_config import metricWrapper
-
+from sam_spl.alpha_loss import AlphaLoss
 
 class Trainer:
     """
@@ -137,13 +138,17 @@ class Trainer:
                 leave=False,
             )
         for idx, batch in enumerate(self.train_loader):
-            batch_data, batch_masks, _ = batch
-            batch_data = batch_data.to(self.device)
-            batch_masks = batch_masks.to(self.device)
-            pred_logits = self.model(batch_data)
+            batch_data, batch_masks, clutter_labels, _ = batch
+            batch_data = batch_data.to(self.device).float()
+            batch_masks = batch_masks.to(self.device).float().clamp(0, 1)
+            clutter_labels = clutter_labels.to(self.device).float().clamp(0, 1)
+            pred_logits, return_dict = self.model(batch_data)
             loss = 0
             for pred_logit in pred_logits:
                 loss += self.loss_fn(pred_logit.sigmoid(), batch_masks)
+            alpha_loss = AlphaLoss(return_dict, clutter_labels, batch_masks)
+            inter_bce = self.loss_fn(return_dict["target_mask"].sigmoid(), batch_masks) + self.loss_fn(return_dict["clutter_mask"].sigmoid(), clutter_labels)
+            loss += 0.1*alpha_loss + inter_bce
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
@@ -151,7 +156,7 @@ class Trainer:
             total_samples += batch_data.size(0)
             if self.rank == 0:
                 pbar.update()
-                pbar.desc = f"[Training] Epoch {self.epoch:3d} loss={total_loss / total_samples: .6f}"
+                pbar.desc = f"[Training] Epoch {self.epoch:3d} loss={total_loss / total_samples: .6f} bce_loss={loss.item()-0.05*(alpha_loss.item()+inter_bce.item()): .6f} alpha_loss={0.05*alpha_loss.item(): .6f} inter_bce={0.05*inter_bce.item(): .6f}"
         if self.rank == 0:
             pbar.close()
         avg_loss = total_loss / total_samples
@@ -186,12 +191,15 @@ class Trainer:
         total_loss = 0
         total_samples = 0
         for idx, batch in enumerate(self.val_loader):
-            batch_data, batch_masks, _ = batch
-            batch_data = batch_data.to(self.device)
-            batch_masks = batch_masks.to(self.device)
-            pred_logit = self.model(batch_data)[0]
-            loss = 0
-            loss += self.loss_fn(pred_logit.sigmoid(), batch_masks)
+            batch_data, batch_masks, clutter_labels, _ = batch
+            batch_data = batch_data.to(self.device).float()
+            batch_masks = batch_masks.to(self.device).float().clamp(0, 1)
+            clutter_labels = clutter_labels.to(self.device).float().clamp(0, 1)
+            masks, return_dict = self.model(batch_data)
+            pred_logit = masks[0]
+            alpha_loss = AlphaLoss(return_dict, clutter_labels, batch_masks)
+            inter_bce = self.loss_fn(return_dict["target_mask"].sigmoid(), batch_masks) + self.loss_fn(return_dict["clutter_mask"].sigmoid(), clutter_labels)
+            loss = self.loss_fn(pred_logit.sigmoid(), batch_masks) + 0.05*alpha_loss + 0.05*inter_bce
             total_loss += loss.item() * batch_data.size(0)
             total_samples += batch_data.size(0)
             if self.rank == 0:

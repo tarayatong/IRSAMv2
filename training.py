@@ -74,6 +74,12 @@ def main():
     parser.add_argument(
         "--gpu", default=0, type=int, help="GPU id to use (if not using DDP)"
     )
+    parser.add_argument(
+        "--resume",
+        default=None,
+        type=str,
+        help="Path to checkpoint to resume training from",
+    )
     args = parser.parse_args()
     seed_everything(args.seed)
     distributed = args.use_ddp
@@ -156,9 +162,21 @@ def main():
         metric_wrapper = metricWrapper(),
     )
     
+    start_epoch = 0
+    if args.resume is not None:
+        if os.path.isfile(args.resume):
+            if is_main_process:
+                logger.info(f"Resuming training from checkpoint: {args.resume}")
+            checkpoint = trainer.load_checkpoint(args.resume)
+            start_epoch = checkpoint.get("epoch", 0) + 1
+            if is_main_process:
+                logger.info(f"Resumed from epoch {start_epoch}")
+        else:
+            if is_main_process:
+                logger.warning(f"Checkpoint file not found: {args.resume}")
 
     # Training loop
-    for epoch in range(args.epoch):
+    for epoch in range(start_epoch, args.epoch):
         trainer.epoch = epoch
         trainer.train_one_epoch()
         if epoch % 1 == 0:

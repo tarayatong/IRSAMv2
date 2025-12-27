@@ -1,6 +1,6 @@
 import os
 import random
-
+import cv2
 import numpy as np
 import torch
 import torchvision.transforms as transforms
@@ -98,8 +98,8 @@ class ImageFolder(Dataset):
     ):
         self.path = path
         self.copy_paste = copy_paste
-        self.T_masks = os.path.join(path, data_set, "Target_mask")
-        self.T_images = os.path.join(path, data_set, "Target_image")
+        self.T_masks = os.path.join(path, data_set, "masks")
+        self.T_images = os.path.join(path, data_set, "images")
         self.base_size = base_size
         self.crop_size = crop_size
         self.istraining = istraining
@@ -170,17 +170,24 @@ class ImageFolder(Dataset):
     def __len__(self):
         return len(self.images)
 
-    def _testval_sync_transform(self, img, mask):
+    def _testval_sync_transform(self, img, mask, clutter_label=None):
         base_size = self.base_size
         if self.data_set == "SIRST-UAVB" or self.data_set == "IRSTDID-SKY":
             img = img.resize((480, 480), Image.BILINEAR)
             mask = mask.resize((480, 480), Image.NEAREST)
+            if clutter_label is not None:
+                clutter_label = clutter_label.resize((480, 480), Image.NEAREST)
         else:
             img = img.resize((base_size, base_size), Image.BILINEAR)
             mask = mask.resize((base_size, base_size), Image.NEAREST)
+            if clutter_label is not None:
+                clutter_label = clutter_label.resize((base_size, base_size), Image.NEAREST)
 
         # final transform
         img, mask = np.array(img), np.array(mask, dtype=np.float32)  # img: <class 'mxnet.ndarray.ndarray.NDArray'> (512, 512, 3)
+        if clutter_label is not None:
+            clutter_label = np.array(clutter_label, dtype=np.float32)
+            return img, mask, clutter_label
         return img, mask
 
     def _copy_paste_transform(self, img, mask, CP_num):
@@ -209,11 +216,13 @@ class ImageFolder(Dataset):
 
         return img, mask
 
-    def _sync_transform(self, img, mask, is_copy_paste=True):
+    def _sync_transform(self, img, mask, clutter_label=None, is_copy_paste=True):
         # random mirror
         if random.random() < 0.5:
             img = img.transpose(Image.FLIP_LEFT_RIGHT)
             mask = mask.transpose(Image.FLIP_LEFT_RIGHT)
+            if clutter_label is not None:
+                clutter_label = clutter_label.transpose(Image.FLIP_LEFT_RIGHT)
         crop_size = self.crop_size
         # random scale (short edge)
         long_size = random.randint(int(self.base_size * 0.5), int(self.base_size * 2.0))
@@ -228,25 +237,38 @@ class ImageFolder(Dataset):
             short_size = oh
         img = img.resize((ow, oh), Image.BILINEAR)
         mask = mask.resize((ow, oh), Image.NEAREST)
+        if clutter_label is not None:
+            clutter_label = clutter_label.resize((ow, oh), Image.NEAREST)
         # pad crop
         if short_size < crop_size:
             padh = crop_size - oh if oh < crop_size else 0
             padw = crop_size - ow if ow < crop_size else 0
             img = ImageOps.expand(img, border=(0, 0, padw, padh), fill=0)
             mask = ImageOps.expand(mask, border=(0, 0, padw, padh), fill=0)
+            if clutter_label is not None:
+                clutter_label = ImageOps.expand(clutter_label, border=(0, 0, padw, padh), fill=0)
         # random crop crop_size
         w, h = img.size
         x1 = random.randint(0, w - crop_size)
         y1 = random.randint(0, h - crop_size)
         img = img.crop((x1, y1, x1 + crop_size, y1 + crop_size))
         mask = mask.crop((x1, y1, x1 + crop_size, y1 + crop_size))
+        if clutter_label is not None:
+            clutter_label = clutter_label.crop((x1, y1, x1 + crop_size, y1 + crop_size))
         # gaussian blur as in PSP
         if random.random() < 0.5:
             img = img.filter(ImageFilter.GaussianBlur(radius=random.random()))
         # final transform
         if is_copy_paste:
             img, mask = self._copy_paste_transform(img, mask, random.randint(1, 100))  # CP
+            # clutter_label logic for copy-paste is complex and usually not done directly on clutter map in same way
+            # Assuming we don't copy-paste clutter, or if we do, we need to pass it.
+            # For now, let's keep clutter label sync with geometric transforms only.
+            
         img, mask = np.array(img), np.array(mask, dtype=np.float32)
+        if clutter_label is not None:
+            clutter_label = np.array(clutter_label, dtype=np.float32)
+            return img, mask, clutter_label
         return img, mask
 
     def __getitem__(self, index):
@@ -255,6 +277,11 @@ class ImageFolder(Dataset):
 
         image = Image.open(image_path).convert("RGB")
         mask = Image.open(mask_path)
+        
+        # Ensure image and mask have the same size
+        if image.size != mask.size:
+            mask = mask.resize(image.size, Image.NEAREST)
+            
         mask_array = np.array(mask)
         mask_array[mask_array >= 127] = 255
         mask_array[mask_array < 127] = 0
@@ -263,15 +290,68 @@ class ImageFolder(Dataset):
         image_name = os.path.basename(image_path)
 
         if self.data_set == "NUDT-sea" or self.data_set == "IRSTD-1k":
-            if self.istraining:
-                img, mask = self._sync_transform(image, mask, is_copy_paste=self.copy_paste)
-                img = self.transform(img)
-                mask = np.expand_dims(mask, axis=0).astype("float32") / 255.0
+            # Calculate clutter label BEFORE sync_transform because we want to augment it too
+            # Or calculate it AFTER?
+            # User wants _sync_transform to handle clutter_labels.
+            # So we must compute clutter_label on the original PIL image first?
+            # BUT user's formula uses Canny which operates on image content.
+            # The previous implementation calculated it AFTER augmentation on the final tensor/numpy array.
+            # If we want to augment clutter_label, we must have it BEFORE augmentation.
+            
+            # Let's calculate clutter_label on the raw image/mask first, then augment everything together.
+            
+            # 1. Prepare raw numpy for calculation
+            im_np = np.array(image) # RGB
+            gt_np = np.array(mask) # 0-255 or 0-1? mask is PIL image mode 'L' or similar. 
+            # In __getitem__, mask is already loaded.
+            
+            # Check mask value range
+            # mask_array[mask_array >= 127] = 255
+            # mask_array[mask_array < 127] = 0
+            # mask is already binary-like 0/255
+            
+            gt_np = np.array(mask)
+            
+            imgt = im_np * (gt_np > 0)[:, :, None]
+            
+            t1 = im_np.mean()
+            target_pixels = imgt[imgt > 0]
+            if len(target_pixels) > 0:
+                mean_target = target_pixels.mean()
             else:
-                img, mask = self._testval_sync_transform(image, mask)
-                img = self.transform(img)
+                mean_target = 0
+            
+            t2 = abs(mean_target - t1)
+            
+            edge = cv2.Canny(im_np, int(t1), int(t2)) # Canny expects int thresholds usually
+            blurred = cv2.GaussianBlur(edge, (3, 3), 0)
+            
+            clutter_label_np = ((blurred - edge) > 0).astype(np.uint8) * 255 
+            # We want clutter_label to be 0-255 for PIL image to work with transforms
+            # Remove target area from clutter? Formula: * (1 - gt / 255.)
+            # We can do this removal AFTER augmentation or BEFORE.
+            # Let's do it before to be consistent with "label".
+            
+            clutter_label_np = clutter_label_np * (1 - (gt_np > 0).astype(np.uint8))
+            clutter_label = Image.fromarray(clutter_label_np.astype(np.uint8))
+
+            if self.istraining:
+                img, mask, clutter_label = self._sync_transform(image, mask, clutter_label=clutter_label, is_copy_paste=self.copy_paste)
+                img_pil = transforms.ToPILImage()(img.astype(np.uint8)) if isinstance(img, np.ndarray) else img
+                img = self.transform(img_pil)
                 mask = np.expand_dims(mask, axis=0).astype("float32") / 255.0
-            return img, torch.from_numpy(mask), image_name
+                clutter_label = np.expand_dims(clutter_label, axis=0).astype("float32") / 255.0
+            else:
+                img, mask, clutter_label = self._testval_sync_transform(image, mask, clutter_label=clutter_label)
+                img_pil = transforms.ToPILImage()(img.astype(np.uint8)) if isinstance(img, np.ndarray) else img
+                img = self.transform(img_pil)
+                mask = np.expand_dims(mask, axis=0).astype("float32") / 255.0
+                clutter_label = np.expand_dims(clutter_label, axis=0).astype("float32") / 255.0
+            
+            mask = torch.from_numpy(mask)
+            clutter_label = torch.from_numpy(clutter_label)
+
+            return img, mask, clutter_label, image_name
         elif self.data_set == "NUDT-SIRST":
             image = image.resize((self.base_size, self.base_size), Image.BILINEAR)
             mask = mask.resize((self.base_size, self.base_size), Image.BILINEAR)
@@ -290,6 +370,27 @@ class ImageFolder(Dataset):
                 )
                 img = torch.from_numpy(np.ascontiguousarray(img_patch))
                 mask = torch.from_numpy(np.ascontiguousarray(mask_patch))
+                
+                # NUDT-SIRST clutter label calculation (post-augmentation because custom augmentation is numpy-based)
+                # Recalculate on the augmented patch
+                im_np = (img.numpy().transpose(1, 2, 0)).astype(np.float32) # Normalized image
+                # To use Canny, we need uint8 image. We need to un-normalize it to get roughly 0-255 range or just scale.
+                # Normalized function: (img - mean) / std. Reverse: img * std + mean.
+                # NUDT-SIRST: mean=107.809, std=33.022
+                im_unnorm = im_np * 33.02274703979492 + 107.80905151367188
+                im_unnorm = np.clip(im_unnorm, 0, 255).astype(np.uint8)
+                
+                gt_np = (mask.numpy().squeeze() * 255).astype(np.uint8)
+                
+                imgt = im_unnorm * (gt_np > 0)[:, :, None]
+                t1 = im_unnorm.mean()
+                mean_target = imgt[imgt > 0].mean() if imgt.sum() > 0 else 0
+                t2 = abs(mean_target - t1)
+                
+                edge = cv2.Canny(im_unnorm, int(t1), int(t2))
+                blurred = cv2.GaussianBlur(edge, (3, 3), 0)
+                clutter_label_np = ((blurred - edge) > 0).astype(np.float32) * (1 - gt_np / 255.0)
+                clutter_label = torch.from_numpy(clutter_label_np).unsqueeze(0)
 
             else:
                 image = Normalized(np.array(image, dtype=np.float32), self.data_set)
@@ -305,17 +406,70 @@ class ImageFolder(Dataset):
                 )
                 img = torch.from_numpy(np.ascontiguousarray(img_patch))
                 mask = torch.from_numpy(np.ascontiguousarray(mask_patch))
+                
+                # Recalculate clutter on padded image
+                im_np = (img.numpy().transpose(1, 2, 0)).astype(np.float32)
+                im_unnorm = im_np * 33.02274703979492 + 107.80905151367188
+                im_unnorm = np.clip(im_unnorm, 0, 255).astype(np.uint8)
+                
+                gt_np = (mask.numpy().squeeze() * 255).astype(np.uint8)
+                
+                imgt = im_unnorm * (gt_np > 0)[:, :, None]
+                t1 = im_unnorm.mean()
+                mean_target = imgt[imgt > 0].mean() if imgt.sum() > 0 else 0
+                t2 = abs(mean_target - t1)
+                
+                edge = cv2.Canny(im_unnorm, int(t1), int(t2))
+                blurred = cv2.GaussianBlur(edge, (3, 3), 0)
+                clutter_label_np = ((blurred - edge) > 0).astype(np.float32) * (1 - gt_np / 255.0)
+                clutter_label = torch.from_numpy(clutter_label_np).unsqueeze(0)
 
             mask = (mask > 0).to(torch.float32)
-            return img, mask, image_name
+            
+            return img, mask, clutter_label, image_name
         else:
-            if self.istraining:
-                img, mask = self._sync_transform(image, mask, is_copy_paste=False)
-                img = self.transform(img)
-                mask = np.expand_dims(mask, axis=0).astype("float32") / 255.0
+            # Calculate clutter label FIRST
+            im_np = np.array(image)
+            gt_np = np.array(mask)
+            
+            # Check and fix size mismatch
+            if im_np.shape[:2] != gt_np.shape[:2]:
+                gt_np = cv2.resize(gt_np, (im_np.shape[1], im_np.shape[0]), interpolation=cv2.INTER_NEAREST)
+                mask = Image.fromarray(gt_np)
+
+            imgt = im_np * (gt_np > 0)[:, :, None]
+            
+            t1 = im_np.mean()
+            target_pixels = imgt[imgt > 0]
+            if len(target_pixels) > 0:
+                mean_target = target_pixels.mean()
             else:
-                img, mask = self._testval_sync_transform(image, mask)
-                img = self.transform(img)
+                mean_target = 0 # Fallback if no target pixels
+            
+            t2 = abs(mean_target - t1)
+            
+            edge = cv2.Canny(im_np, int(t1), int(t2))
+            blurred = cv2.GaussianBlur(edge, (3, 3), 0)
+            
+            clutter_label_np = ((blurred - edge) > 0).astype(np.uint8) * 255
+            clutter_label_np = clutter_label_np * (1 - (gt_np > 0).astype(np.uint8))
+            clutter_label = Image.fromarray(clutter_label_np.astype(np.uint8))
+
+            if self.istraining:
+                img, mask, clutter_label = self._sync_transform(image, mask, clutter_label=clutter_label, is_copy_paste=False)
+                img_pil = transforms.ToPILImage()(img.astype(np.uint8)) if isinstance(img, np.ndarray) else img
+                img = self.transform(img_pil)
                 mask = np.expand_dims(mask, axis=0).astype("float32") / 255.0
+                clutter_label = np.expand_dims(clutter_label, axis=0).astype("float32") / 255.0
+            else:
+                img, mask, clutter_label = self._testval_sync_transform(image, mask, clutter_label=clutter_label)
+                img_pil = transforms.ToPILImage()(img.astype(np.uint8)) if isinstance(img, np.ndarray) else img
+                img = self.transform(img_pil)
+                mask = np.expand_dims(mask, axis=0).astype("float32") / 255.0
+                clutter_label = np.expand_dims(clutter_label, axis=0).astype("float32") / 255.0
+
             mask[mask < 1] = 0
-            return img, torch.from_numpy(mask), image_name
+            mask = torch.from_numpy(mask)
+            clutter_label = torch.from_numpy(clutter_label)
+
+            return img, mask, clutter_label, image_name

@@ -52,8 +52,9 @@ You can train or test the model using the provided scripts. For example:
 
 ```bash
 # Training example
-python training.py --batch_size 12 --image_size 256 --lr 1e-2 --dataset NUDT-SIRST --save_dir ./checkpoints/NUDT-SIRST --gpu 0
-python training.py --batch_size 8 --image_size 256 --lr 1e-2 --dataset NUAA-SIRST --save_dir ./checkpoints/NUAA-SIRST --gpu 1
+python training.py --batch_size 8 --image_size 256 --lr 1e-2 --dataset NUDT-SIRST --save_dir ./checkpoints/NUDT-SIRST --gpu 2 --resume checkpoints/NUDT-SIRST/checkpoint_epoch_133.pt
+python training.py --batch_size 8 --image_size 256 --lr 1e-2 --dataset NUAA-SIRST --save_dir ./checkpoints/NUAA-SIRST/EC --gpu 2 --resume checkpoints/NUAA-SIRST/EC/checkpoint_epoch_181.pt
+python training.py --batch_size 8 --image_size 512 --lr 1e-2 --dataset IRSTD-1k --save_dir ./checkpoints/IRSTD-1k --gpu 2 --resume checkpoints/IRSTD-1k/checkpoint_epoch_25.pt
 
 # Distributed Data Parallel Training example
 CUDA_VISIBLE_DEVICES="0, 1, 2, 3" torchrun --nproc_per_node=4 --nnodes=1 training.py --batch_size 12 --image_size 256 --lr 1e-2 --dataset NUDT-SIRST --save_dir ./checkpoints/NUDT-SIRST --use_ddp
@@ -61,6 +62,9 @@ CUDA_VISIBLE_DEVICES="0, 1, 2, 3" torchrun --nproc_per_node=4 --nnodes=1 trainin
 # Testing example
 python testing.py --dataset NUDT-SIRST --image_size 256 --weights ./checkpoints/NUDT-SIRST.pt --device cuda:0
 python testing.py --dataset NUAA-SIRST --image_size 256 --weights ./checkpoints/NUAA-SIRST/checkpoint_epoch_255.pt --device cuda:0
+python testing.py --dataset NUDT-SIRST --image_size 256 --weights ./checkpoints/NUDT-SIRST/checkpoint_epoch_371.pt --device cuda:0 --save_dir results/NUDT
+python testing.py --dataset IRSTD-1k --image_size 512 --weights ./checkpoints/IRSTD-1k/checkpoint_epoch_202.pt --device cuda:0 --save_dir results/IRSTD-1k
+
 ```
 
 

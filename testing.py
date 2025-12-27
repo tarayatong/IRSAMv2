@@ -19,11 +19,12 @@ def evalution(test_loader, predictor, device, save_dir=None):
     if save_dir and not os.path.exists(save_dir):
         os.makedirs(save_dir)
 
-    for _, (batch_data, gt_masks, image_names) in enumerate(test_loader):
+    for _, (batch_data, gt_masks, clutter_labels, image_names) in enumerate(test_loader):
         B, _, H, W = batch_data.shape
         gt_masks = gt_masks.to(device)
         batch_data = batch_data.to(device)
-        pred_logit = predictor(batch_data)[0]
+        clutter_labels = clutter_labels.to(device)
+        pred_logit = predictor(batch_data)[0][0]
         pred_mask = pred_logit > 0
         
         if save_dir:

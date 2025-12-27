@@ -186,7 +186,7 @@ class SamAdaptor(nn.Module):
         if self.use_sam_decoder:
             self.decoder_dim = decoder_transformer.embedding_dim
             self.decoder_transformer = decoder_transformer
-            self.mask_token = nn.Embedding(1, self.decoder_dim)
+            self.mask_token = nn.Embedding(self.num_mask_tokens, self.decoder_dim)
             self.output_upscaling = nn.Sequential(
                 nn.ConvTranspose2d(self.decoder_dim, self.decoder_dim // 4, kernel_size=2, stride=2),
                 nn.BatchNorm2d(self.decoder_dim // 4),
@@ -194,13 +194,21 @@ class SamAdaptor(nn.Module):
                 nn.ConvTranspose2d(self.decoder_dim // 4, dense_low_channels[0], kernel_size=2, stride=2),
                 nn.GELU(),
             )
-            self.output_hypernetworks_mlp = MLP(self.decoder_dim, self.decoder_dim, dense_low_channels[0], 3)
+            self.output_hypernetworks_mlp = nn.ModuleList([MLP(self.decoder_dim, self.decoder_dim, dense_low_channels[0], 3) for _ in range(self.num_mask_tokens)])
+            self.output_mlp = MLP(self.decoder_dim, self.decoder_dim, dense_low_channels[0], 3)
+            self.upsample = nn.Upsample(scale_factor=4, mode='bilinear', align_corners=False)
             self.image_pe_encoder = MultiScalePositionalEncoder(
                 in_chans=pe_inch,
                 down_times=[len(self.dense_low_channels) - i - 1 for i in range(len(pe_inch))],
             )
             self.proj_block = build_dynamic_conv(self.skip_channel_gen[0], len(stages))
-
+            self.alpha_head = nn.Sequential(
+                nn.Conv2d(dense_low_channels[0], 4, kernel_size=3, padding=1, stride=1),
+                nn.BatchNorm2d(4),
+                nn.GELU(),
+                nn.Conv2d(4, 1, kernel_size=3, padding=1, stride=1),
+                nn.BatchNorm2d(1),
+            )
             self.deep_conv_block = nn.Sequential(
                 nn.Conv2d(backbone_channel_list[0], self.decoder_dim, kernel_size=1, stride=1),
                 LayerNorm2d(self.decoder_dim),
@@ -386,16 +394,30 @@ class SamAdaptor(nn.Module):
         hs, src = self.decoder_transformer(src, image_pe, token)
         src = src.transpose(1, 2).contiguous().view(B, self.decoder_dim, W, H)
         upscaled_embedding = self.output_upscaling(src)
-
-        hyper_in = self.output_hypernetworks_mlp(hs.squeeze(1))
-        deep_feat = hyper_in.unsqueeze(-1).unsqueeze(-1) * upscaled_embedding
-
-        deep_feat = self.proj_block(deep_feat)
+        hyper_in_tgt = self.output_hypernetworks_mlp[0](hs[:, 0, :].squeeze(1))
+        hyper_in_clutter = self.output_hypernetworks_mlp[1](hs[:, 1, :].squeeze(1))
+        target_feat = hyper_in_tgt.unsqueeze(-1).unsqueeze(-1) * upscaled_embedding
+        clutter_feat = hyper_in_clutter.unsqueeze(-1).unsqueeze(-1) * upscaled_embedding
+        hyper_out = self.output_mlp(hs.sum(dim=1, keepdim=True))
+        b,c,w,h = target_feat.shape
+        target_mask = self.upsample((hyper_out @ target_feat.view(b, -1, w*h)).view(b, -1, w, h))
+        clutter_mask = self.upsample((hyper_out @ clutter_feat.view(b, -1, w*h)).view(b, -1, w, h))
+        alpha = self.alpha_head(upscaled_embedding)
+        corrected_embedding = (1+alpha) * target_feat - alpha*clutter_feat
+        deep_feat = self.proj_block(corrected_embedding)
         for i, (feature_map, skip_conv, up_decoder) in enumerate(zip(dense_features[::-1], self.skip_convs, self.up_decoders)):
             deep_feat = up_decoder(deep_feat, skip_conv(feature_map))
             masks.append(deep_feat)
-
-        return masks
+        return_dict = {
+            "target_mask": target_mask,
+            "clutter_mask": clutter_mask,
+            "alpha": alpha,
+            "corrected_embedding": corrected_embedding,
+            "target_feat": target_feat,
+            "clutter_feat": clutter_feat,
+            "hyper_out": hyper_out,
+        }
+        return masks, return_dict
 
     def _process_deep_features2(self, features: dict) -> list:
         """Alternative processing path used when SAM decoder is not enabled.
@@ -448,12 +470,12 @@ class SamAdaptor(nn.Module):
         out_image_size = x.shape[-2:]
         features = self.image_encoder(x)
         if self.use_sam_decoder:
-            masks = self._process_deep_features(features)
+            masks, return_dict = self._process_deep_features(features)
         else:
             masks = self._process_deep_features2(features)
 
         masks = self._generate_masks(masks, out_image_size)
-        return masks
+        return masks, return_dict
 
 
 def make_adaptor(
@@ -468,6 +490,7 @@ def make_adaptor(
     use_sam_decoder=True,
     pe_inch=[24, 48, 96],
     sam_ckpt_path=None,
+    num_mask_tokens=2,
 ):
     """_summary_
 
@@ -512,6 +535,7 @@ def make_adaptor(
         dense_low_channels=dense_low_channels,
         use_sam_decoder=use_sam_decoder,
         pe_inch=pe_inch,
+        num_mask_tokens=num_mask_tokens,
     )
     if sam_ckpt_path is not None:
         predictor._load_sam_checkpoint(sam_ckpt_path)
