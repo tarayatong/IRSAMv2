@@ -243,6 +243,7 @@ class ImageFolder(Dataset):
         if short_size < crop_size:
             padh = crop_size - oh if oh < crop_size else 0
             padw = crop_size - ow if ow < crop_size else 0
+            # fill_color = tuple(np.array(img).mean(axis=(0, 1)).astype(int))
             img = ImageOps.expand(img, border=(0, 0, padw, padh), fill=0)
             mask = ImageOps.expand(mask, border=(0, 0, padw, padh), fill=0)
             if clutter_label is not None:
