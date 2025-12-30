@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from sam_spl.base_layer import Res_block
+from sam_spl.pmd import PMD_features
 
 
 def _make_layer(block, input_channels, output_channels, num_blocks=2, downsample=False):
@@ -47,6 +48,8 @@ class ImageEncoder(nn.Module):
             self.channel_gen.append((backbone_channel_list[i], backbone_channel_list[i - 1]))
         self.channel_gen = self.channel_gen[1:]
 
+        self.pmd1 = PMD_features(backbone_channel_list[2]//4, backbone_channel_list[-1])
+        self.pmd2 = PMD_features(backbone_channel_list[1]//4, backbone_channel_list[-1])
         self.pool = nn.MaxPool2d(2, 2)
 
         self.trunk = sam_encoder
@@ -72,9 +75,12 @@ class ImageEncoder(nn.Module):
 
         out_feats = self._process_initial_layers(x)
         out = out_feats[-1]
-
         sam_out = self._embed_and_position(x, ecd_embed)
         pmt_out = None
+
+        clt_feats1 = self.pmd1(out_feats[0])   # 128, 128, 192
+        clt_feats2 = self.pmd2(out_feats[1])    # 64, 64, 96
+        clt_feats = [clt_feats1, clt_feats2]
 
         inc_num = 0
         for i, sam_block in enumerate(ecd_blocks):
@@ -94,4 +100,5 @@ class ImageEncoder(nn.Module):
         return {
             "sam_backbone_embeds": out_feats[3: ],
             "dense_embeds": out_feats[: 3],
+            'clt_embeds': clt_feats,
         }

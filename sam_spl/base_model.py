@@ -22,7 +22,7 @@ from sam_spl.pmt_generator import MultiScaleBlock, MultiScalePositionalEncoder
 from sam_spl.transformer import TwoWayTransformer
 from sam_spl.utils import LayerNorm2d, MLP
 from sam_spl.image_encoder import ImageEncoder
-
+from sam_spl.pmd import DySample
 
 def weights_init_kaiming(m):
     classname = m.__class__.__name__
@@ -190,13 +190,10 @@ class SamAdaptor(nn.Module):
             self.decoder_transformer = decoder_transformer
             self.mask_token = nn.Embedding(self.num_mask_tokens, self.decoder_dim)
             self.output_upscaling = nn.Sequential(
-                nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
-                nn.Conv2d(self.decoder_dim, self.decoder_dim // 4, kernel_size=3, padding=1, stride=1),
+                DySample(self.decoder_dim),
                 # nn.ConvTranspose2d(self.decoder_dim, self.decoder_dim // 4, kernel_size=2, stride=2),
-                nn.BatchNorm2d(self.decoder_dim // 4),
-                nn.GELU(),
                 # nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
-                nn.Conv2d(self.decoder_dim // 4, dense_low_channels[0], kernel_size=3, padding=1, stride=1),
+                nn.Conv2d(self.decoder_dim, dense_low_channels[0], kernel_size=3, padding=1, stride=1),
                 # nn.ConvTranspose2d(self.decoder_dim // 4, dense_low_channels[0], kernel_size=2, stride=2),
                 nn.BatchNorm2d(dense_low_channels[0]),
                 nn.GELU(),
@@ -217,17 +214,20 @@ class SamAdaptor(nn.Module):
                 nn.BatchNorm2d(1),
             )
             self.deep_conv_block = nn.Sequential(
-                nn.Conv2d(backbone_channel_list[1], self.decoder_dim, kernel_size=1, stride=1),
+                # nn.Conv2d(dense_low_channels[0], dense_low_channels[0], kernel_size=3, padding=1, stride=2),
+                # nn.BatchNorm2d(dense_low_channels[0]),
+                # nn.GELU(),                
+                nn.Conv2d(backbone_channel_list[-2], self.decoder_dim, kernel_size=1, stride=1),
                 LayerNorm2d(self.decoder_dim),
                 nn.GELU(),
                 nn.Conv2d(self.decoder_dim, self.decoder_dim, kernel_size=1, stride=1),
                 nn.GELU(),
             )
             self.tgt_proj = nn.Sequential(
-                nn.Conv2d(dense_low_channels[0], dense_low_channels[0]//4, kernel_size=3, padding=1, stride=1),
-                nn.BatchNorm2d(dense_low_channels[0]//4),
+                nn.Conv2d(dense_low_channels[0], dense_low_channels[0], kernel_size=3, padding=1, stride=1),
+                nn.BatchNorm2d(dense_low_channels[0]),
                 nn.GELU(),
-                nn.Conv2d(dense_low_channels[0]//4, dense_low_channels[0], kernel_size=1, stride=1),
+                nn.Conv2d(dense_low_channels[0], dense_low_channels[0], kernel_size=1, stride=1),
                 nn.BatchNorm2d(dense_low_channels[0]),
                 nn.GELU(),
             )
@@ -235,7 +235,7 @@ class SamAdaptor(nn.Module):
                 nn.Conv2d(dense_low_channels[0], dense_low_channels[0]//4, kernel_size=3, padding=1, stride=1),
                 nn.BatchNorm2d(dense_low_channels[0]//4),
                 nn.GELU(),
-                nn.Conv2d(dense_low_channels[0]//4, dense_low_channels[0], kernel_size=1, stride=1),
+                nn.Conv2d(dense_low_channels[0]//4, dense_low_channels[0], kernel_size=3, padding=1, stride=2),
                 nn.BatchNorm2d(dense_low_channels[0]),
                 nn.GELU(),
             )
@@ -402,10 +402,11 @@ class SamAdaptor(nn.Module):
         """
         masks = []
         dense_features, sam_feature = features["dense_embeds"], features["sam_backbone_embeds"]
+        clt_features = features["clt_embeds"]
         try:
             image_embeddings = sam_feature[-2]
         except IndexError:
-            image_embeddings = dense_features[-2]
+            image_embeddings = dense_features[-1]
 
         pe_input = dense_features + sam_feature
         pe_input = pe_input[:len(self.pe_inch)]
@@ -418,15 +419,13 @@ class SamAdaptor(nn.Module):
         src = src.transpose(1, 2).contiguous().view(B, self.decoder_dim, W, H)
         upscaled_embedding = self.output_upscaling(src)
         if self.use_alpha:
-            hyper_in_tgt = self.output_hypernetworks_mlp[0](hs[:, 0, :].squeeze(1))
-            hyper_in_clutter = self.output_hypernetworks_mlp[1](hs[:, 1, :].squeeze(1))
-            target_feat = hyper_in_tgt.unsqueeze(-1).unsqueeze(-1) * self.tgt_proj(upscaled_embedding)
-            clutter_feat = hyper_in_clutter.unsqueeze(-1).unsqueeze(-1) * self.clt_proj(upscaled_embedding)
-            hyper_out = self.output_mlp(hs.sum(dim=1, keepdim=True))
+            hyper_out = self.output_hypernetworks_mlp[0](hs)
+            target_feat = self.tgt_proj(upscaled_embedding)
+            clutter_feat = self.clt_proj(clt_features[0])
             b,c,w,h = target_feat.shape
             target_mask = self.upsample((hyper_out @ target_feat.view(b, -1, w*h)).view(b, -1, w, h))
             clutter_mask = self.upsample((hyper_out @ clutter_feat.view(b, -1, w*h)).view(b, -1, w, h))
-            alpha = self.alpha_head(upscaled_embedding)
+            alpha = self.alpha_head(upscaled_embedding+clt_features[1])
             corrected_embedding = (1+alpha) * target_feat - alpha*clutter_feat
             return_dict = {
                 "target_mask": target_mask,
@@ -517,7 +516,7 @@ def make_adaptor(
     use_sam_decoder=True,
     pe_inch=[24, 48, 96],
     sam_ckpt_path=None,
-    num_mask_tokens=2,
+    num_mask_tokens=1,
     use_alpha=True,
 ):
     """_summary_
