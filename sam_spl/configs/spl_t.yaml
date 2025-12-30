@@ -8,4 +8,5 @@ embed_dim: 96
 dense_low_channels: [96, 48, 24]
 window_spec: [8, 4, 14]
 use_sam_decoder: true
+use_alpha: true
 sam_ckpt_path: ./sam_spl/sam2_ckpt/sam2.1_hiera_tiny.pt
