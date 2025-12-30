@@ -1,0 +1,12 @@
+
+# make_adaptor 配置参数
+backbone_channel_list: [384, 192, 96]
+stages: [1, 2, 7]
+global_att_blocks: [5, 7, 9]
+block: res
+embed_dim: 96
+dense_low_channels: [96, 48, 24]
+window_spec: [8, 4, 14]
+use_sam_decoder: true
+use_alpha: false
+sam_ckpt_path: ./sam_spl/sam2_ckpt/sam2.1_hiera_tiny.pt

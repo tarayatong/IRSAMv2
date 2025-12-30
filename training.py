@@ -80,6 +80,19 @@ def main():
         type=str,
         help="Path to checkpoint to resume training from",
     )
+    parser.add_argument(
+        "--loss_weights",
+        default=[1.0, 1.0, 1.0],
+        type=list,
+        help="Weights for loss functions",
+    )
+    parser.add_argument(
+        "--log_dir",
+        default="./logs",
+        type=str,
+        help="Directory to save logs",
+    )
+
     args = parser.parse_args()
     seed_everything(args.seed)
     distributed = args.use_ddp
@@ -89,9 +102,9 @@ def main():
     # Set up logging (only main process logs in DDP)
     is_main_process = (not distributed) or (local_rank == 0)
     if is_main_process:
-        os.makedirs("./logs", exist_ok=True)
+        os.makedirs(args.log_dir, exist_ok=True)
         now_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_filename = f"./logs/training_{args.dataset}_{now_str}.log"
+        log_filename = f"{args.log_dir}/training_{args.dataset}_{now_str}.log"
         logger.add(
             log_filename,
             format="{time} - {level} - {message}",
@@ -159,6 +172,7 @@ def main():
         num_workers=7,
         distributed=distributed,
         save_dir=args.save_dir,
+        loss_weights=args.loss_weights,
         metric_wrapper = metricWrapper(),
     )
     

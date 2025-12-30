@@ -8,4 +8,5 @@ embed_dim: 144
 dense_low_channels: [144, 72, 36]
 pe_inch: [36, 72, 144]
 use_sam_decoder: true
+use_alpha: true
 sam_ckpt_path: ./sam_spl/sam2_ckpt/sam2.1_hiera_large.pt
