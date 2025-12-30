@@ -188,10 +188,14 @@ class SamAdaptor(nn.Module):
             self.decoder_transformer = decoder_transformer
             self.mask_token = nn.Embedding(self.num_mask_tokens, self.decoder_dim)
             self.output_upscaling = nn.Sequential(
-                nn.ConvTranspose2d(self.decoder_dim, self.decoder_dim // 4, kernel_size=2, stride=2),
+                nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
+                nn.Conv2d(self.decoder_dim, self.decoder_dim // 4, kernel_size=3, padding=1, stride=1),
+                # nn.ConvTranspose2d(self.decoder_dim, self.decoder_dim // 4, kernel_size=2, stride=2),
                 nn.BatchNorm2d(self.decoder_dim // 4),
                 nn.GELU(),
-                nn.ConvTranspose2d(self.decoder_dim // 4, dense_low_channels[0], kernel_size=2, stride=2),
+                nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
+                nn.Conv2d(self.decoder_dim // 4, dense_low_channels[0], kernel_size=3, padding=1, stride=1),
+                # nn.ConvTranspose2d(self.decoder_dim // 4, dense_low_channels[0], kernel_size=2, stride=2),
                 nn.GELU(),
             )
             self.output_hypernetworks_mlp = nn.ModuleList([MLP(self.decoder_dim, self.decoder_dim, dense_low_channels[0], 3) for _ in range(self.num_mask_tokens)])

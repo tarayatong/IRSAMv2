@@ -52,7 +52,7 @@ You can train or test the model using the provided scripts. For example:
 
 ```bash
 # Training example
-python training.py --batch_size 8 --image_size 256 --lr 1e-2 --dataset NUDT-SIRST --save_dir ./checkpoints/NUDT-SIRST --gpu 2 --resume checkpoints/NUDT-SIRST/checkpoint_epoch_133.pt
+python training.py --batch_size 8 --image_size 256 --lr 1e-2 --dataset NUDT-SIRST --save_dir ./checkpoints/NUDT-SIRST --gpu 1 --resume checkpoints/NUDT-SIRST/checkpoint_epoch_98.pt
 python training.py --batch_size 8 --image_size 256 --lr 1e-2 --dataset NUAA-SIRST --save_dir ./checkpoints/NUAA-SIRST/EC --gpu 2 --resume checkpoints/NUAA-SIRST/EC/checkpoint_epoch_181.pt
 python training.py --batch_size 8 --image_size 512 --lr 1e-2 --dataset IRSTD-1k --save_dir ./checkpoints/IRSTD-1k --gpu 2 --resume checkpoints/IRSTD-1k/checkpoint_epoch_25.pt
 

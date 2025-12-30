@@ -64,7 +64,7 @@ def main(
     parser.add_argument("--weights", default="./checkpoints/IRSTD-1k.pt", type=str)
     parser.add_argument("--device", default="cuda:1", type=str)
     parser.add_argument("--seed", default=111, type=int)
-    parser.add_argument("--save_dir", default="./results/IRSTD-1k", type=str, help="Directory to save test results")
+    parser.add_argument("--save_dir", default=None, type=str, help="Directory to save test results")
     FLAGS = parser.parse_args()
 
     # Settings

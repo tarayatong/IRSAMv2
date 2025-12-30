@@ -148,7 +148,7 @@ class Trainer:
                 loss += self.loss_fn(pred_logit.sigmoid(), batch_masks)
             alpha_loss = AlphaLoss(return_dict, clutter_labels, batch_masks)
             inter_bce = self.loss_fn(return_dict["target_mask"].sigmoid(), batch_masks) + self.loss_fn(return_dict["clutter_mask"].sigmoid(), clutter_labels)
-            loss += 0.1*alpha_loss + inter_bce
+            loss += alpha_loss + 10*inter_bce
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
@@ -199,7 +199,7 @@ class Trainer:
             pred_logit = masks[0]
             alpha_loss = AlphaLoss(return_dict, clutter_labels, batch_masks)
             inter_bce = self.loss_fn(return_dict["target_mask"].sigmoid(), batch_masks) + self.loss_fn(return_dict["clutter_mask"].sigmoid(), clutter_labels)
-            loss = self.loss_fn(pred_logit.sigmoid(), batch_masks) + 0.05*alpha_loss + 0.05*inter_bce
+            loss = 10*self.loss_fn(pred_logit.sigmoid(), batch_masks) + alpha_loss + 10*inter_bce
             total_loss += loss.item() * batch_data.size(0)
             total_samples += batch_data.size(0)
             if self.rank == 0:
