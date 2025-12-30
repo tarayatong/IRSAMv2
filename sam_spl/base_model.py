@@ -152,9 +152,11 @@ class SamAdaptor(nn.Module):
         num_mask_tokens=1,
         use_sam_decoder=True,
         pe_inch=[24, 48, 96],
+        use_alpha=True,
     ):
         super().__init__()
         self.use_sam_decoder = use_sam_decoder
+        self.use_alpha = use_alpha
         self.num_mask_tokens = num_mask_tokens
         self.dense_low_channels = backbone_channel_list + dense_low_channels[1:]
         self.pe_inch = pe_inch
@@ -193,9 +195,10 @@ class SamAdaptor(nn.Module):
                 # nn.ConvTranspose2d(self.decoder_dim, self.decoder_dim // 4, kernel_size=2, stride=2),
                 nn.BatchNorm2d(self.decoder_dim // 4),
                 nn.GELU(),
-                nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
+                # nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
                 nn.Conv2d(self.decoder_dim // 4, dense_low_channels[0], kernel_size=3, padding=1, stride=1),
                 # nn.ConvTranspose2d(self.decoder_dim // 4, dense_low_channels[0], kernel_size=2, stride=2),
+                nn.BatchNorm2d(dense_low_channels[0]),
                 nn.GELU(),
             )
             self.output_hypernetworks_mlp = nn.ModuleList([MLP(self.decoder_dim, self.decoder_dim, dense_low_channels[0], 3) for _ in range(self.num_mask_tokens)])
@@ -203,7 +206,7 @@ class SamAdaptor(nn.Module):
             self.upsample = nn.Upsample(scale_factor=4, mode='bilinear', align_corners=False)
             self.image_pe_encoder = MultiScalePositionalEncoder(
                 in_chans=pe_inch,
-                down_times=[len(self.dense_low_channels) - i - 1 for i in range(len(pe_inch))],
+                down_times=[len(self.dense_low_channels) - i - 2 for i in range(len(pe_inch))],
             )
             self.proj_block = build_dynamic_conv(self.skip_channel_gen[0], len(stages))
             self.alpha_head = nn.Sequential(
@@ -214,10 +217,26 @@ class SamAdaptor(nn.Module):
                 nn.BatchNorm2d(1),
             )
             self.deep_conv_block = nn.Sequential(
-                nn.Conv2d(backbone_channel_list[0], self.decoder_dim, kernel_size=1, stride=1),
+                nn.Conv2d(backbone_channel_list[1], self.decoder_dim, kernel_size=1, stride=1),
                 LayerNorm2d(self.decoder_dim),
                 nn.GELU(),
                 nn.Conv2d(self.decoder_dim, self.decoder_dim, kernel_size=1, stride=1),
+                nn.GELU(),
+            )
+            self.tgt_proj = nn.Sequential(
+                nn.Conv2d(dense_low_channels[0], dense_low_channels[0]//4, kernel_size=3, padding=1, stride=1),
+                nn.BatchNorm2d(dense_low_channels[0]//4),
+                nn.GELU(),
+                nn.Conv2d(dense_low_channels[0]//4, dense_low_channels[0], kernel_size=1, stride=1),
+                nn.BatchNorm2d(dense_low_channels[0]),
+                nn.GELU(),
+            )
+            self.clt_proj = nn.Sequential(
+                nn.Conv2d(dense_low_channels[0], dense_low_channels[0]//4, kernel_size=3, padding=1, stride=1),
+                nn.BatchNorm2d(dense_low_channels[0]//4),
+                nn.GELU(),
+                nn.Conv2d(dense_low_channels[0]//4, dense_low_channels[0], kernel_size=1, stride=1),
+                nn.BatchNorm2d(dense_low_channels[0]),
                 nn.GELU(),
             )
         else:
@@ -384,9 +403,9 @@ class SamAdaptor(nn.Module):
         masks = []
         dense_features, sam_feature = features["dense_embeds"], features["sam_backbone_embeds"]
         try:
-            image_embeddings = sam_feature[-1]
+            image_embeddings = sam_feature[-2]
         except IndexError:
-            image_embeddings = dense_features[-1]
+            image_embeddings = dense_features[-2]
 
         pe_input = dense_features + sam_feature
         pe_input = pe_input[:len(self.pe_inch)]
@@ -398,29 +417,33 @@ class SamAdaptor(nn.Module):
         hs, src = self.decoder_transformer(src, image_pe, token)
         src = src.transpose(1, 2).contiguous().view(B, self.decoder_dim, W, H)
         upscaled_embedding = self.output_upscaling(src)
-        hyper_in_tgt = self.output_hypernetworks_mlp[0](hs[:, 0, :].squeeze(1))
-        hyper_in_clutter = self.output_hypernetworks_mlp[1](hs[:, 1, :].squeeze(1))
-        target_feat = hyper_in_tgt.unsqueeze(-1).unsqueeze(-1) * upscaled_embedding
-        clutter_feat = hyper_in_clutter.unsqueeze(-1).unsqueeze(-1) * upscaled_embedding
-        hyper_out = self.output_mlp(hs.sum(dim=1, keepdim=True))
-        b,c,w,h = target_feat.shape
-        target_mask = self.upsample((hyper_out @ target_feat.view(b, -1, w*h)).view(b, -1, w, h))
-        clutter_mask = self.upsample((hyper_out @ clutter_feat.view(b, -1, w*h)).view(b, -1, w, h))
-        alpha = self.alpha_head(upscaled_embedding)
-        corrected_embedding = (1+alpha) * target_feat - alpha*clutter_feat
+        if self.use_alpha:
+            hyper_in_tgt = self.output_hypernetworks_mlp[0](hs[:, 0, :].squeeze(1))
+            hyper_in_clutter = self.output_hypernetworks_mlp[1](hs[:, 1, :].squeeze(1))
+            target_feat = hyper_in_tgt.unsqueeze(-1).unsqueeze(-1) * self.tgt_proj(upscaled_embedding)
+            clutter_feat = hyper_in_clutter.unsqueeze(-1).unsqueeze(-1) * self.clt_proj(upscaled_embedding)
+            hyper_out = self.output_mlp(hs.sum(dim=1, keepdim=True))
+            b,c,w,h = target_feat.shape
+            target_mask = self.upsample((hyper_out @ target_feat.view(b, -1, w*h)).view(b, -1, w, h))
+            clutter_mask = self.upsample((hyper_out @ clutter_feat.view(b, -1, w*h)).view(b, -1, w, h))
+            alpha = self.alpha_head(upscaled_embedding)
+            corrected_embedding = (1+alpha) * target_feat - alpha*clutter_feat
+            return_dict = {
+                "target_mask": target_mask,
+                "clutter_mask": clutter_mask,
+                "alpha": alpha,
+                "corrected_embedding": corrected_embedding,
+                "target_feat": target_feat,
+                "clutter_feat": clutter_feat,
+                "hyper_out": hyper_out,
+            }
+        else:
+            corrected_embedding = upscaled_embedding
+            return_dict = None
         deep_feat = self.proj_block(corrected_embedding)
         for i, (feature_map, skip_conv, up_decoder) in enumerate(zip(dense_features[::-1], self.skip_convs, self.up_decoders)):
             deep_feat = up_decoder(deep_feat, skip_conv(feature_map))
             masks.append(deep_feat)
-        return_dict = {
-            "target_mask": target_mask,
-            "clutter_mask": clutter_mask,
-            "alpha": alpha,
-            "corrected_embedding": corrected_embedding,
-            "target_feat": target_feat,
-            "clutter_feat": clutter_feat,
-            "hyper_out": hyper_out,
-        }
         return masks, return_dict
 
     def _process_deep_features2(self, features: dict) -> list:
@@ -495,6 +518,7 @@ def make_adaptor(
     pe_inch=[24, 48, 96],
     sam_ckpt_path=None,
     num_mask_tokens=2,
+    use_alpha=True,
 ):
     """_summary_
 
@@ -540,6 +564,7 @@ def make_adaptor(
         use_sam_decoder=use_sam_decoder,
         pe_inch=pe_inch,
         num_mask_tokens=num_mask_tokens,
+        use_alpha=use_alpha,
     )
     if sam_ckpt_path is not None:
         predictor._load_sam_checkpoint(sam_ckpt_path)

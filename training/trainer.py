@@ -66,6 +66,7 @@ class Trainer:
         num_workers: int = 4,
         distributed: bool = False,
         save_dir: str = "./checkpoints",
+        loss_weights: list[float]=[1., 1., 1.],
         metric_wrapper: Optional[metricWrapper] = metricWrapper(),
     ):
         self.model = model  # type: nn.Module
@@ -81,6 +82,7 @@ class Trainer:
         self.world_size = dist.get_world_size() if distributed else 1  # type: int
         self.epoch = 0  # type: int
         self.best_metric = None  # type: Optional[Any]
+        self.loss_weights = loss_weights  # type: List[float]
         self.train_sampler = (
             DistributedSampler(train_dataset) if distributed else None
         )  # type: Optional[DistributedSampler]
@@ -143,12 +145,15 @@ class Trainer:
             batch_masks = batch_masks.to(self.device).float().clamp(0, 1)
             clutter_labels = clutter_labels.to(self.device).float().clamp(0, 1)
             pred_logits, return_dict = self.model(batch_data)
-            loss = 0
+            pred_loss = 0
             for pred_logit in pred_logits:
-                loss += self.loss_fn(pred_logit.sigmoid(), batch_masks)
-            alpha_loss = AlphaLoss(return_dict, clutter_labels, batch_masks)
-            inter_bce = self.loss_fn(return_dict["target_mask"].sigmoid(), batch_masks) + self.loss_fn(return_dict["clutter_mask"].sigmoid(), clutter_labels)
-            loss += alpha_loss + 10*inter_bce
+                pred_loss += self.loss_fn(pred_logit.sigmoid(), batch_masks)
+            if return_dict is not None:
+                alpha_loss = AlphaLoss(return_dict, clutter_labels, batch_masks)
+                inter_bce = self.loss_fn(return_dict["target_mask"].sigmoid(), batch_masks) + self.loss_fn(return_dict["clutter_mask"].sigmoid(), clutter_labels)
+                loss = self.loss_weights[0]*pred_loss + self.loss_weights[1]*alpha_loss + self.loss_weights[2]*inter_bce
+            else:
+                loss = pred_loss
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
@@ -156,7 +161,10 @@ class Trainer:
             total_samples += batch_data.size(0)
             if self.rank == 0:
                 pbar.update()
-                pbar.desc = f"[Training] Epoch {self.epoch:3d} loss={total_loss / total_samples: .6f} bce_loss={loss.item()-0.05*(alpha_loss.item()+inter_bce.item()): .6f} alpha_loss={0.05*alpha_loss.item(): .6f} inter_bce={0.05*inter_bce.item(): .6f}"
+                if return_dict is not None:
+                    pbar.desc = f"[Training] Epoch {self.epoch:3d} loss={total_loss / total_samples: .6f} pred_loss={pred_loss.item(): .6f} alpha_loss={alpha_loss.item(): .6f} inter_bce={inter_bce.item(): .6f}"
+                else:
+                    pbar.desc = f"[Training] Epoch {self.epoch:3d} loss={total_loss / total_samples: .6f} pred_loss={pred_loss.item(): .6f}"
         if self.rank == 0:
             pbar.close()
         avg_loss = total_loss / total_samples
@@ -197,9 +205,12 @@ class Trainer:
             clutter_labels = clutter_labels.to(self.device).float().clamp(0, 1)
             masks, return_dict = self.model(batch_data)
             pred_logit = masks[0]
-            alpha_loss = AlphaLoss(return_dict, clutter_labels, batch_masks)
-            inter_bce = self.loss_fn(return_dict["target_mask"].sigmoid(), batch_masks) + self.loss_fn(return_dict["clutter_mask"].sigmoid(), clutter_labels)
-            loss = 10*self.loss_fn(pred_logit.sigmoid(), batch_masks) + alpha_loss + 10*inter_bce
+            if return_dict is not None:
+                alpha_loss = AlphaLoss(return_dict, clutter_labels, batch_masks)
+                inter_bce = self.loss_fn(return_dict["target_mask"].sigmoid(), batch_masks) + self.loss_fn(return_dict["clutter_mask"].sigmoid(), clutter_labels)
+                loss = self.loss_weights[0]*self.loss_fn(pred_logit.sigmoid(), batch_masks) + self.loss_weights[1]*alpha_loss + self.loss_weights[2]*inter_bce
+            else:
+                loss = self.loss_fn(pred_logit.sigmoid(), batch_masks)
             total_loss += loss.item() * batch_data.size(0)
             total_samples += batch_data.size(0)
             if self.rank == 0:

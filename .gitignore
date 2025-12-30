@@ -193,4 +193,4 @@ logs/*
 
 # sam2 checkpoints
 sam_spl/sam2_ckpt/*
-!sam_spl/sam2_ckpt/download_ckpts.sh
+!sam_spl/sam2_ckpt/download_ckpts.sh.idea/
