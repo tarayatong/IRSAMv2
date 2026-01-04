@@ -250,7 +250,6 @@ class SamAdaptor(nn.Module):
                 nn.GELU(),
             )
 
-        
         self.apply(weights_init_kaiming)
 
     def _select_block(self, block: str) -> nn.Module:
