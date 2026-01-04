@@ -53,11 +53,12 @@ You can train or test the model using the provided scripts. For example:
 ```bash
 # Training example
 python training.py --batch_size 8 --image_size 256 --lr 1e-2 --dataset NUDT-SIRST --save_dir ./checkpoints/NUDT-SIRST --gpu 1 
-python training.py --batch_size 8 --image_size 256 --lr 1e-2 --dataset NUDT-SIRST --save_dir ./checkpoints/base/NUDT-SIRST --gpu 1 --log_dir logs/base --config_path ./sam_spl/configs/spl_t_base.yaml
+python training.py --batch_size 8 --image_size 256 --lr 1e-2 --dataset NUDT-SIRST --save_dir ./checkpoints/base/NUDT-SIRST --log_dir logs/base --config_path ./sam_spl/configs/spl_t_base.yaml 
+python training.py --batch_size 8 --image_size 256 --lr 1e-2 --dataset NUDT-SIRST --save_dir ./checkpoints/alpha_loss/NUDT-SIRST --log_dir logs/alpha_loss --config_path ./sam_spl/configs/spl_t.yaml 
 
 python training.py --batch_size 8 --image_size 256 --lr 1e-2 --dataset NUAA-SIRST --save_dir ./checkpoints/NUAA-SIRST/EC --gpu 2 --resume checkpoints/NUAA-SIRST/EC/checkpoint_epoch_181.pt
 python training.py --batch_size 8 --image_size 256 --lr 1e-2 --dataset NUAA-SIRST --save_dir ./checkpoints/base/NUAA-SIRST --gpu 1 --log_dir logs/base --config_path ./sam_spl/configs/spl_t_base.yaml
-python training.py --batch_size 8 --image_size 256 --lr 1e-2 --dataset NUAA-SIRST --save_dir ./checkpoints/alpha_loss/NUAA-SIRST --gpu 1 --log_dir logs/alpha_loss --config_path ./sam_spl/configs/spl_t.yaml
+python training.py --batch_size 8 --image_size 256 --lr 1e-2 --dataset NUAA-SIRST --save_dir ./checkpoints/alpha_loss/NUAA-SIRST --log_dir logs/alpha_loss --config_path ./sam_spl/configs/spl_t.yaml
 
 python training.py --batch_size 8 --image_size 512 --lr 1e-2 --dataset IRSTD-1k --save_dir ./checkpoints/IRSTD-1k --gpu 2 --resume checkpoints/IRSTD-1k/checkpoint_epoch_25.pt
 python training.py --batch_size 8 --image_size 512 --lr 1e-2 --dataset IRSTD-1k --save_dir ./checkpoints/base/IRSTD-1k --gpu 1 --log_dir logs/base --config_path ./sam_spl/configs/spl_t_base.yaml
