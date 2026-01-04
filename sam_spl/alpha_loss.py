@@ -1,5 +1,7 @@
 import torch
 import torch.nn.functional as F
+import matplotlib.pyplot as plt
+
 
 @torch.no_grad()
 def compute_inverse_embedding(hyper_in_tokens, target_masks):
@@ -85,6 +87,12 @@ def AlphaLoss(out_dict, clutter_labels, target_labels, mode='geo'):
     y_min = y_embedding.min(dim=1, keepdim=True)[0]
     y_max = y_embedding.max(dim=1, keepdim=True)[0]
     y_ = (y_embedding - y_min) / (y_max - y_min + 1e-8)
+
+    # for i in range(y_.shape[0]):
+    #     plt.imsave(f'results/vis_res/return_dict/y_{i}.png', y_[i].mean(dim=0).detach().cpu().numpy())
+    #     plt.imsave(f'results/vis_res/return_dict/p{i}.png', p[i].mean(dim=0).detach().cpu().numpy())
+    #     plt.imsave(f'results/vis_res/return_dict/q{i}.png', q[i].mean(dim=0).detach().cpu().numpy())
+    #     plt.imsave(f'results/vis_res/return_dict/p_{i}.png', p_[i].mean(dim=0).detach().cpu().numpy())
 
     if mode == 'cos':
         cos_sim = F.cosine_similarity(p_, y_, dim=1)  # [b, h, w]

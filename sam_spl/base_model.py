@@ -23,6 +23,8 @@ from sam_spl.transformer import TwoWayTransformer
 from sam_spl.utils import LayerNorm2d, MLP
 from sam_spl.image_encoder import ImageEncoder
 from sam_spl.pmd import DySample
+import matplotlib.pyplot as plt
+import os
 
 def weights_init_kaiming(m):
     classname = m.__class__.__name__
@@ -427,15 +429,24 @@ class SamAdaptor(nn.Module):
             clutter_mask = self.upsample((hyper_out @ clutter_feat.view(b, -1, w*h)).view(b, -1, w, h))
             alpha = self.alpha_head(upscaled_embedding+clt_features[1])
             corrected_embedding = (1+alpha) * target_feat - alpha*clutter_feat
+            corrected_mask = self.upsample((hyper_out @ corrected_embedding.view(b, -1, w*h)).view(b, -1, w, h))
             return_dict = {
                 "target_mask": target_mask,
                 "clutter_mask": clutter_mask,
+                "corrected_mask": corrected_mask,
                 "alpha": alpha,
                 "corrected_embedding": corrected_embedding,
                 "target_feat": target_feat,
                 "clutter_feat": clutter_feat,
                 "hyper_out": hyper_out,
             }
+            # os.makedirs('results/vis_res/return_dict/', exist_ok=True)
+            # for k, v in return_dict.items():
+            #     if k == "hyper_out":
+            #         continue
+            #     for i in range(v.shape[0]):
+            #         plt.imsave(f"results/vis_res/return_dict/{k}{i}.png", v[i].mean(dim=0).squeeze().cpu().detach().numpy())
+            #         print(f"results/vis_res/return_dict/{k}{i}.png")
         else:
             corrected_embedding = upscaled_embedding
             return_dict = None

@@ -7,6 +7,9 @@ from dataset.image_floder import ImageFolder
 from metrics import PD_FAmeter, mIoUmeter, nIoUmeter
 from sam_spl.base_model import make_adaptor
 from training import seed_everything
+import matplotlib.pyplot as plt
+from sam_spl.alpha_loss import AlphaLoss
+
 
 @torch.no_grad()
 def evalution(test_loader, predictor, device, save_dir=None):
@@ -24,9 +27,22 @@ def evalution(test_loader, predictor, device, save_dir=None):
         gt_masks = gt_masks.to(device)
         batch_data = batch_data.to(device)
         clutter_labels = clutter_labels.to(device)
-        pred_logit = predictor(batch_data)[0][0]
+        pred_masks, return_dict = predictor(batch_data)
+        pred_logit = pred_masks[0]
         pred_mask = pred_logit > 0
-        
+
+        for i in range(gt_masks.shape[0]):
+            plt.imsave(f'results/vis_res/return_dict/label{i}.png', gt_masks[i].mean(dim=0).cpu().detach().numpy(),
+                       cmap='gray')
+            plt.imsave(f'results/vis_res/return_dict/image{i}.png', batch_data[i].mean(dim=0).cpu().detach().numpy(),
+                       cmap='gray')
+            plt.imsave(f'results/vis_res/return_dict/label_clt{i}.png',
+                       clutter_labels[i].mean(dim=0).cpu().detach().numpy(), cmap='gray')
+            plt.imsave(f'results/vis_res/return_dict/output{i}.png', pred_mask.float()[i].mean(dim=0).cpu().detach().numpy(),
+                       cmap='gray')
+        alpha_loss = AlphaLoss(return_dict, clutter_labels, gt_masks)
+        print()
+
         if save_dir:
             pred_masks_np = (pred_mask.detach().cpu().squeeze(1).numpy() * 255).astype(np.uint8)
             for i in range(B):
