@@ -290,17 +290,7 @@ class ImageFolder(Dataset):
         mask = Image.fromarray(mask_array)
         image_name = os.path.basename(image_path)
 
-        if self.data_set == "NUDT-sea" or self.data_set == "IRSTD-1k":
-            # Calculate clutter label BEFORE sync_transform because we want to augment it too
-            # Or calculate it AFTER?
-            # User wants _sync_transform to handle clutter_labels.
-            # So we must compute clutter_label on the original PIL image first?
-            # BUT user's formula uses Canny which operates on image content.
-            # The previous implementation calculated it AFTER augmentation on the final tensor/numpy array.
-            # If we want to augment clutter_label, we must have it BEFORE augmentation.
-            
-            # Let's calculate clutter_label on the raw image/mask first, then augment everything together.
-            
+        if self.data_set == "NUDT-sea" or self.data_set == "IRSTD-1k":            
             # 1. Prepare raw numpy for calculation
             im_np = np.array(image) # RGB
             gt_np = np.array(mask) # 0-255 or 0-1? mask is PIL image mode 'L' or similar. 
@@ -327,12 +317,7 @@ class ImageFolder(Dataset):
             edge = cv2.Canny(im_np, int(t1), int(t2)) # Canny expects int thresholds usually
             blurred = cv2.GaussianBlur(edge, (3, 3), 0)
             
-            clutter_label_np = ((blurred - edge) > 0).astype(np.uint8) * 255 
-            # We want clutter_label to be 0-255 for PIL image to work with transforms
-            # Remove target area from clutter? Formula: * (1 - gt / 255.)
-            # We can do this removal AFTER augmentation or BEFORE.
-            # Let's do it before to be consistent with "label".
-            
+            clutter_label_np = ((blurred - edge) > 0).astype(np.uint8) * 255           
             clutter_label_np = clutter_label_np * (1 - (gt_np > 0).astype(np.uint8))
             clutter_label = Image.fromarray(clutter_label_np.astype(np.uint8))
 
@@ -355,7 +340,7 @@ class ImageFolder(Dataset):
             return img, mask, clutter_label, image_name
         elif self.data_set == "NUDT-SIRST":
             image = image.resize((self.base_size, self.base_size), Image.BILINEAR)
-            mask = mask.resize((self.base_size, self.base_size), Image.BILINEAR)
+            mask = mask.resize((self.base_size, self.base_size), Image.NEAREST)
             if self.istraining:
                 image = Normalized(np.array(image, dtype=np.float32), self.data_set)
                 mask = np.array(mask, dtype=np.float32) / 255.0
@@ -390,7 +375,8 @@ class ImageFolder(Dataset):
                 
                 edge = cv2.Canny(im_unnorm, int(t1), int(t2))
                 blurred = cv2.GaussianBlur(edge, (3, 3), 0)
-                clutter_label_np = ((blurred - edge) > 0).astype(np.float32) * (1 - gt_np / 255.0)
+                # clutter_label_np = ((blurred - edge) > 0).astype(np.float32) * (1 - gt_np / 255.0)
+                clutter_label_np = (blurred > 0).astype(np.float32)
                 clutter_label = torch.from_numpy(clutter_label_np).unsqueeze(0)
 
             else:
