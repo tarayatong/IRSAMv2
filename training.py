@@ -210,7 +210,7 @@ def main():
                         extra={"best_fscore": best_fscore}
                     )
                     if is_main_process:
-                        logger.info(f"New best F-score: {best_fscore:.4f}, saved best.pth")
+                        logger.info(f"New best F-score: {best_fscore:.4f}, saved best.pt")
 
 
 if __name__ == "__main__":

@@ -425,10 +425,12 @@ class SamAdaptor(nn.Module):
             target_feat = self.tgt_proj(upscaled_embedding)
             clutter_feat = self.clt_proj(clt_features[0])
             b,c,w,h = target_feat.shape
-            target_mask = self.upsample((hyper_tgt @ target_feat.view(b, -1, w*h)).view(b, -1, w, h))
-            clutter_mask = self.upsample((hyper_clt @ clutter_feat.view(b, -1, w*h)).view(b, -1, w, h))
+            tgt_weight = torch.sigmoid((hyper_tgt @ target_feat.view(b, -1, w*h)).view(b, -1, w, h))
+            clutter_weight = torch.sigmoid((hyper_clt @ clutter_feat.view(b, -1, w*h)).view(b, -1, w, h))
+            target_mask = self.upsample(tgt_weight)
+            clutter_mask = self.upsample(clutter_weight)
             alpha = self.alpha_head(upscaled_embedding+clt_features[1])
-            corrected_embedding = (1+alpha) * target_feat - alpha*clutter_feat
+            corrected_embedding = (1+alpha) * tgt_weight * target_feat - alpha*clutter_weight*clutter_feat
             return_dict = {
                 "target_mask": target_mask,
                 "clutter_mask": clutter_mask,
