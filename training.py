@@ -82,7 +82,7 @@ def main():
     )
     parser.add_argument(
         "--loss_weights",
-        default=[1.0, 1.0, 1.0],
+        default=[1.0, 0.05, 0.1],
         type=list,
         help="Weights for loss functions",
     )
@@ -190,14 +190,27 @@ def main():
                 logger.warning(f"Checkpoint file not found: {args.resume}")
 
     # Training loop
+    best_fscore = 0.
     for epoch in range(start_epoch, args.epoch):
         trainer.epoch = epoch
         trainer.train_one_epoch()
         if epoch % 1 == 0:
             val_loss, val_metrics = trainer.evaluate()
             trainer.save_checkpoint(
-                save_path=os.path.join(args.save_dir, f"checkpoint_epoch_{epoch}.pt")
+                save_path=os.path.join(args.save_dir, "last.pt")
             )
+            
+            # Save best checkpoint based on F-score
+            if val_metrics is not None:
+                _, _, fscore = val_metrics.miou_meter.get()
+                if fscore > best_fscore:
+                    best_fscore = fscore
+                    trainer.save_checkpoint(
+                        save_path=os.path.join(args.save_dir, "best.pt"),
+                        extra={"best_fscore": best_fscore}
+                    )
+                    if is_main_process:
+                        logger.info(f"New best F-score: {best_fscore:.4f}, saved best.pth")
 
 
 if __name__ == "__main__":

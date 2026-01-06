@@ -52,42 +52,31 @@ def AlphaLoss(out_dict, clutter_labels, target_labels, mode='geo'):
     clutter_feat = out_dict.get("clutter_feat")  # [b, 32, h, w]
     alpha = out_dict.get("alpha")  # [b, 32, h, w] 或 None
     corrected_embedding = out_dict.get("corrected_embedding")  # [b, 32, h, w]
-    hyper_out = out_dict.get("hyper_out")  # [b, 1, 32] -> 需要 reshape to [b, 1, 32]
+    hyper_tgt = out_dict.get("hyper_tgt")  # [b, 1, 32] -> 需要 reshape to [b, 1, 32]
     
-    # 确保 hyper_out 形状正确 [b, 1, c]
-    if len(hyper_out.shape) == 2:
-        hyper_out = hyper_out.unsqueeze(1)
+    # 确保 hyper_tgt 形状正确 [b, 1, c]
+    if len(hyper_tgt.shape) == 2:
+        hyper_tgt = hyper_tgt.unsqueeze(1)
     
     # 将 labels 归一化到 [0, 1] 并保持形状 [b, 1, h, w]
     y = target_labels / 255.0  # [B, 1, H, W]
     
     # 逆向计算理想的 embedding: 如果 hyper_tokens @ y_embedding = y，那么 y_embedding 是什么
     # y_embedding 的形状: [b, 32, h, w]
-    y_embedding = compute_inverse_embedding(hyper_out, y)
+    y_embedding = compute_inverse_embedding(hyper_tgt, y)
 
     if target_feat.shape[-2:] != y_embedding.shape[-2:]:
         target_feat = F.interpolate(target_feat, size=y_embedding.shape[-2:], mode='bilinear', align_corners=False)
         clutter_feat = F.interpolate(clutter_feat, size=y_embedding.shape[-2:], mode='bilinear', align_corners=False)
         corrected_embedding = F.interpolate(corrected_embedding, size=y_embedding.shape[-2:], mode='bilinear', align_corners=False)
 
-    p_min = target_feat.min(dim=1, keepdim=True)[0]  # [b, 1, h, w]
-    p_max = target_feat.max(dim=1, keepdim=True)[0]  # [b, 1, h, w]
-    p = (target_feat - p_min) / (p_max - p_min + 1e-8)  # [b, 32, h, w]
-
-    q_min = clutter_feat.min(dim=1, keepdim=True)[0]  # [b, 1, h, w]
-    q_max = clutter_feat.max(dim=1, keepdim=True)[0]  # [b, 1, h, w]
-    q = (clutter_feat - q_min) / (q_max - q_min + 1e-8)  # [b, 32, h, w]
-
-    p__min = corrected_embedding.min(dim=1, keepdim=True)[0]
-    p__max = corrected_embedding.max(dim=1, keepdim=True)[0]
-    p_ = (corrected_embedding - p__min) / (p__max - p__min + 1e-8)  # [b, 32, h, w]
-
-    y_min = y_embedding.min(dim=1, keepdim=True)[0]
-    y_max = y_embedding.max(dim=1, keepdim=True)[0]
-    y_ = (y_embedding - y_min) / (y_max - y_min + 1e-8)
+    p = F.normalize(target_feat, dim=1)
+    q = F.normalize(clutter_feat, dim=1)
+    p_ = F.normalize(corrected_embedding, dim=1)
+    y_ = F.normalize(y_embedding, dim=1)
 
     if mode == 'cos':
-        cos_sim = F.cosine_similarity(p_, y_, dim=1)  # [b, h, w]
+        cos_sim = F.cosine_similarity(target_feat, y_embedding, dim=1)  # [b, h, w]
         alpha_loss_val = (1 - cos_sim).mean()
         
     elif mode == 'geo':
@@ -96,8 +85,6 @@ def AlphaLoss(out_dict, clutter_labels, target_labels, mode='geo'):
         alpha_loss_val = F.mse_loss(target1, torch.zeros_like(target1))
         
     else:
-        if alpha is None:
-            raise ValueError(f"mode='{mode}' 需要 alpha，但 out_dict 中 alpha 为 None")
         alpha_loss_val = F.mse_loss(p_, y_)
 
     return alpha_loss_val
