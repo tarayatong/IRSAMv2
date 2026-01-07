@@ -206,6 +206,9 @@ class SamAdaptor(nn.Module):
                 down_times=[len(self.dense_low_channels) - i - 2 for i in range(len(pe_inch))],
             )
             self.proj_block = build_dynamic_conv(self.skip_channel_gen[0], len(stages))
+            self.feature_norm = LayerNorm2d(self.decoder_dim)
+            self.token_norm = nn.LayerNorm(self.decoder_dim)
+            self.output_feature_norm = nn.LayerNorm(self.decoder_dim)
             self.deep_conv_block = nn.Sequential(
                 # nn.Conv2d(dense_low_channels[0], dense_low_channels[0], kernel_size=3, padding=1, stride=2),
                 # nn.BatchNorm2d(dense_low_channels[0]),
@@ -416,8 +419,11 @@ class SamAdaptor(nn.Module):
 
         B, C, W, H = image_embeddings.shape
         src = self.deep_conv_block(image_embeddings)
+        src = self.feature_norm(src)
         token = self.mask_token.weight.unsqueeze(0).expand(B, -1, -1)
         hs, src = self.decoder_transformer(src, image_pe, token)
+        hs = self.token_norm(hs)
+        src = self.output_feature_norm(src)
         src = src.transpose(1, 2).contiguous().view(B, self.decoder_dim, W, H)
         upscaled_embedding = self.output_upscaling(src)
         if self.use_alpha:

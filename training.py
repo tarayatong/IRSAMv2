@@ -82,7 +82,7 @@ def main():
     )
     parser.add_argument(
         "--loss_weights",
-        default=[1.0, 0.1, 0.1],
+        default=[1.0, 0.1, 0.5],
         type=list,
         help="Weights for loss functions",
     )
@@ -196,10 +196,15 @@ def main():
         trainer.train_one_epoch()
         if epoch % 1 == 0:
             val_loss, val_metrics = trainer.evaluate()
-            trainer.save_checkpoint(
-                save_path=os.path.join(args.save_dir, "last.pt")
-            )
-            
+                        # Save checkpoints for the last 10 epochs
+            if epoch >= args.epoch - 10:
+                trainer.save_checkpoint(
+                    save_path=os.path.join(args.save_dir, f"epoch_{epoch}.pt")
+                )
+            else:
+                trainer.save_checkpoint(
+                    save_path=os.path.join(args.save_dir, "last.pt")
+                )
             # Save best checkpoint based on F-score
             if val_metrics is not None:
                 _, _, fscore = val_metrics.miou_meter.get()

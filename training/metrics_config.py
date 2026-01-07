@@ -21,6 +21,7 @@ Key Features:
 import numpy as np
 import torch
 from skimage import measure
+from metrics import nIoUmeter
 
 class mIoUmeter:
     """
@@ -282,6 +283,7 @@ class metricWrapper:
         """
         self.miou_meter = mIoUmeter()
         self.pdfa_meter = PD_FAmeter()
+        self.nIoU_meter = nIoUmeter(1, 0.5)
 
     def __call__(self, pred_logits, targets):
         """
@@ -308,6 +310,10 @@ class metricWrapper:
             targets.reshape(B, H, W).cpu().float(),
             [H, W],
         )
+        self.nIoU_meter.update(
+            pred_logits.reshape(B, 1, H, W).cpu().float(),
+            targets.reshape(B, 1, H, W).cpu().float(),
+        )
 
     def __str__(self):
         """
@@ -321,7 +327,8 @@ class metricWrapper:
         """
         pixAcc, mIoU, fscore = self.miou_meter.get()
         PD, FA = self.pdfa_meter.get()
-        info_str = f"mIoU={mIoU*100:.4f}, Fscore={fscore*100:.4f}, PD={PD*100:.4f}, FA={FA*1e6:.4f}"
+        nIoU = self.nIoU_meter.get()[1]
+        info_str = f"mIoU={mIoU*100:.4f}, nIoU={nIoU*100:.4f}, Fscore={fscore*100:.4f}, PD={PD*100:.4f}, FA={FA*1e6:.4f}"
         return info_str
 
     def reset(self):
@@ -333,3 +340,4 @@ class metricWrapper:
         """
         self.miou_meter.reset()
         self.pdfa_meter.reset()
+        self.nIoU_meter.reset()
