@@ -327,13 +327,14 @@ class ImageFolder(Dataset):
             edge = cv2.Canny(im_np, int(t1), int(t2)) # Canny expects int thresholds usually
             blurred = cv2.GaussianBlur(edge, (3, 3), 0)
             
-            clutter_label_np = ((blurred - edge) > 0).astype(np.uint8) * 255 
-            # We want clutter_label to be 0-255 for PIL image to work with transforms
-            # Remove target area from clutter? Formula: * (1 - gt / 255.)
-            # We can do this removal AFTER augmentation or BEFORE.
-            # Let's do it before to be consistent with "label".
+            clutter_label_np = ((blurred) > 0).astype(np.uint8) * 255 
             
-            clutter_label_np = clutter_label_np * (1 - (gt_np > 0).astype(np.uint8))
+            # Dilate GT to create a buffer zone
+            kernel = np.ones((5, 5), np.uint8)
+            dilated_gt = cv2.dilate((gt_np > 0).astype(np.uint8), kernel, iterations=1)
+
+            # Mask out Clutter using dilated GT
+            clutter_label_np = clutter_label_np * (1 - dilated_gt)
             clutter_label = Image.fromarray(clutter_label_np.astype(np.uint8))
 
             if self.istraining:
@@ -390,7 +391,12 @@ class ImageFolder(Dataset):
                 
                 edge = cv2.Canny(im_unnorm, int(t1), int(t2))
                 blurred = cv2.GaussianBlur(edge, (3, 3), 0)
-                clutter_label_np = ((blurred - edge) > 0).astype(np.float32) * (1 - gt_np / 255.0)
+                
+                # Dilate GT to create a buffer zone
+                kernel = np.ones((5, 5), np.uint8)
+                dilated_gt = cv2.dilate((gt_np > 0).astype(np.uint8), kernel, iterations=1)
+                
+                clutter_label_np = ((blurred) > 0).astype(np.float32) * (1 - dilated_gt)
                 clutter_label = torch.from_numpy(clutter_label_np).unsqueeze(0)
 
             else:
@@ -422,7 +428,12 @@ class ImageFolder(Dataset):
                 
                 edge = cv2.Canny(im_unnorm, int(t1), int(t2))
                 blurred = cv2.GaussianBlur(edge, (3, 3), 0)
-                clutter_label_np = ((blurred - edge) > 0).astype(np.float32) * (1 - gt_np / 255.0)
+                
+                # Dilate GT to create a buffer zone
+                kernel = np.ones((5, 5), np.uint8)
+                dilated_gt = cv2.dilate((gt_np > 0).astype(np.uint8), kernel, iterations=1)
+                
+                clutter_label_np = ((blurred) > 0).astype(np.float32) * (1 - dilated_gt)
                 clutter_label = torch.from_numpy(clutter_label_np).unsqueeze(0)
 
             mask = (mask > 0).to(torch.float32)
@@ -452,8 +463,14 @@ class ImageFolder(Dataset):
             edge = cv2.Canny(im_np, int(t1), int(t2))
             blurred = cv2.GaussianBlur(edge, (3, 3), 0)
             
-            clutter_label_np = ((blurred - edge) > 0).astype(np.uint8) * 255
-            clutter_label_np = clutter_label_np * (1 - (gt_np > 0).astype(np.uint8))
+            clutter_label_np = ((blurred) > 0).astype(np.uint8) * 255
+            
+            # Dilate GT to create a buffer zone
+            kernel = np.ones((5, 5), np.uint8)
+            dilated_gt = cv2.dilate((gt_np > 0).astype(np.uint8), kernel, iterations=1)
+            
+            # Mask out Clutter using dilated GT
+            clutter_label_np = clutter_label_np * (1 - dilated_gt)
             clutter_label = Image.fromarray(clutter_label_np.astype(np.uint8))
 
             if self.istraining:

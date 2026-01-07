@@ -82,8 +82,9 @@ def AlphaLoss(out_dict, clutter_labels, target_labels, mode='geo'):
     elif mode == 'geo':
         # 几何正交模式：要求 (y_embedding - alpha) ⊥ (masks - bgs)
         recon_loss = F.mse_loss(p_, y_)
+        ortho_feat_loss = torch.mean(torch.abs(torch.cosine_similarity(target_feat, clutter_feat, dim=1)))
         target1 = ((y_ - p_) * (p - q)).sum(dim=1, keepdim=True)  # [b, 1, h, w]
-        alpha_loss_val = recon_loss #+ F.mse_loss(target1, torch.zeros_like(target1))
+        alpha_loss_val = recon_loss + 0.1*ortho_feat_loss #+ F.mse_loss(target1, torch.zeros_like(target1))
         
     else:
         alpha_loss_val = F.mse_loss(p_, y_)

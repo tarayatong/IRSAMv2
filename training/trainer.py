@@ -150,7 +150,9 @@ class Trainer:
                 pred_loss += self.loss_fn(pred_logit.sigmoid(), batch_masks)
             if return_dict is not None:
                 alpha_loss = AlphaLoss(return_dict, clutter_labels, batch_masks)
-                inter_bce = self.loss_fn(return_dict["target_mask"], batch_masks) + self.loss_fn(return_dict["clutter_mask"], clutter_labels)
+                tgt_inter_bce = self.loss_fn(return_dict["target_mask"], batch_masks)
+                clt_inter_bce = self.loss_fn(return_dict["clutter_mask"], clutter_labels)
+                inter_bce = tgt_inter_bce + 0.1 * clt_inter_bce
                 loss = self.loss_weights[0]*pred_loss + self.loss_weights[1]*alpha_loss + self.loss_weights[2]*inter_bce
             else:
                 loss = pred_loss
@@ -162,7 +164,7 @@ class Trainer:
             if self.rank == 0:
                 pbar.update()
                 if return_dict is not None:
-                    pbar.desc = f"[Training] Epoch {self.epoch:3d} loss={total_loss / total_samples: .6f} pred_loss={pred_loss.item(): .6f} alpha_loss={alpha_loss.item(): .6f} inter_bce={inter_bce.item(): .6f}"
+                    pbar.desc = f"[Training] Epoch {self.epoch:3d} loss={total_loss / total_samples: .6f} pred_loss={pred_loss.item(): .6f} alpha_loss={alpha_loss.item(): .6f} tgt_inter_bce={tgt_inter_bce.item(): .6f} clt_inter_bce={clt_inter_bce.item(): .6f} inter_bce={inter_bce.item(): .6f}"
                 else:
                     pbar.desc = f"[Training] Epoch {self.epoch:3d} loss={total_loss / total_samples: .6f} pred_loss={pred_loss.item(): .6f}"
         if self.rank == 0:
