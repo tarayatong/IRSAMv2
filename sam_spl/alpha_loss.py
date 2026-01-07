@@ -70,10 +70,10 @@ def AlphaLoss(out_dict, clutter_labels, target_labels, mode='geo'):
         clutter_feat = F.interpolate(clutter_feat, size=y_embedding.shape[-2:], mode='bilinear', align_corners=False)
         corrected_embedding = F.interpolate(corrected_embedding, size=y_embedding.shape[-2:], mode='bilinear', align_corners=False)
 
-    p = F.normalize(target_feat, dim=1)
-    q = F.normalize(clutter_feat, dim=1)
-    p_ = F.normalize(corrected_embedding, dim=1)
-    y_ = F.normalize(y_embedding, dim=1)
+    p = F.normalize(target_feat, dim=1, eps=1e-6)
+    q = F.normalize(clutter_feat, dim=1, eps=1e-6)
+    p_ = F.normalize(corrected_embedding, dim=1, eps=1e-6)
+    y_ = F.normalize(y_embedding, dim=1, eps=1e-6)
 
     if mode == 'cos':
         cos_sim = F.cosine_similarity(target_feat, y_embedding, dim=1)  # [b, h, w]
@@ -81,8 +81,9 @@ def AlphaLoss(out_dict, clutter_labels, target_labels, mode='geo'):
         
     elif mode == 'geo':
         # 几何正交模式：要求 (y_embedding - alpha) ⊥ (masks - bgs)
+        recon_loss = F.mse_loss(p_, y_)
         target1 = ((y_ - p_) * (p - q)).sum(dim=1, keepdim=True)  # [b, 1, h, w]
-        alpha_loss_val = F.mse_loss(target1, torch.zeros_like(target1))
+        alpha_loss_val = recon_loss #+ F.mse_loss(target1, torch.zeros_like(target1))
         
     else:
         alpha_loss_val = F.mse_loss(p_, y_)
