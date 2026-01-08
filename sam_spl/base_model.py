@@ -424,25 +424,26 @@ class SamAdaptor(nn.Module):
         src = src.transpose(1, 2).contiguous().view(B, self.decoder_dim, W, H)
         upscaled_embedding = self.output_upscaling(src)
         if self.use_alpha:
-            hyper_tgt = self.output_hypernetworks_mlp[0](hs[:, 0, :].unsqueeze(1))
-            hyper_clt = self.output_hypernetworks_mlp[1](hs[:, 1, :].unsqueeze(1))
-            target_feat = self.tgt_proj(upscaled_embedding)
-            clutter_feat = self.clt_proj(clt_features[0])
-            b,c,w,h = target_feat.shape
-            tgt_weight = torch.sigmoid((hyper_tgt @ target_feat.view(b, -1, w*h)).view(b, -1, w, h))
-            clutter_weight = torch.sigmoid((hyper_clt @ clutter_feat.view(b, -1, w*h)).view(b, -1, w, h))
-            target_mask = self.upsample(tgt_weight)
-            clutter_mask = self.upsample(clutter_weight)
+            hyper_tgt = self.output_hypernetworks_mlp[0](hs[:, 0, :])
+            hyper_clt = self.output_hypernetworks_mlp[1](hs[:, 1, :])
+            w_t = F.normalize(hyper_tgt, dim=1, eps=1e-6)
+            w_c = F.normalize(hyper_clt, dim=1, eps=1e-6)
+            # target_feat = self.tgt_proj(upscaled_embedding)
+            # clutter_feat = self.clt_proj(clt_features[0])
+            b,c,w,h = upscaled_embedding.shape
+            tgt_proj = (w_t[..., None, None] * upscaled_embedding).sum(dim=1, keepdim=True)
+            clt_proj = (w_c[..., None, None] * upscaled_embedding).sum(dim=1, keepdim=True)
+            target_mask = self.upsample(tgt_proj)
+            clutter_mask = self.upsample(clt_proj)
             alpha = self.alpha_head(upscaled_embedding+clt_features[1])
-            corrected_embedding = upscaled_embedding + alpha * (tgt_weight * target_feat - clutter_weight*clutter_feat)
+            corrected_embedding = upscaled_embedding + alpha * (w_c[..., None, None] * tgt_proj - w_t[..., None, None] * clt_proj)
             return_dict = {
                 "target_mask": target_mask,
                 "clutter_mask": clutter_mask,
                 "alpha": alpha,
                 "corrected_embedding": corrected_embedding,
-                "target_feat": target_feat,
-                "clutter_feat": clutter_feat,
-                "hyper_tgt": hyper_tgt,
+                "w_t": w_t,
+                "w_c": w_c,
             }
         else:
             corrected_embedding = upscaled_embedding

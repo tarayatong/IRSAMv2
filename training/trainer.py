@@ -150,9 +150,9 @@ class Trainer:
                 pred_loss += self.loss_fn(pred_logit.sigmoid(), batch_masks)
             if return_dict is not None:
                 alpha_loss = AlphaLoss(return_dict, clutter_labels, batch_masks)
-                tgt_inter_bce = self.loss_fn(return_dict["target_mask"], batch_masks)
-                clt_inter_bce = self.loss_fn(return_dict["clutter_mask"], clutter_labels)
-                inter_bce = tgt_inter_bce + 0.1 * clt_inter_bce
+                tgt_inter_bce = self.loss_fn(return_dict["target_mask"].sigmoid(), batch_masks)
+                clt_inter_bce = self.loss_fn(return_dict["clutter_mask"].sigmoid(), clutter_labels)
+                inter_bce = tgt_inter_bce + 0.5 * clt_inter_bce
                 loss = self.loss_weights[0]*pred_loss + self.loss_weights[1]*alpha_loss + self.loss_weights[2]*inter_bce
             else:
                 loss = pred_loss
@@ -209,7 +209,7 @@ class Trainer:
             pred_logit = masks[0]
             if return_dict is not None:
                 alpha_loss = AlphaLoss(return_dict, clutter_labels, batch_masks)
-                inter_bce = self.loss_fn(return_dict["target_mask"], batch_masks) + self.loss_fn(return_dict["clutter_mask"], clutter_labels)
+                inter_bce = self.loss_fn(return_dict["target_mask"].sigmoid(), batch_masks) + self.loss_fn(return_dict["clutter_mask"].sigmoid(), clutter_labels)
                 loss = self.loss_weights[0]*self.loss_fn(pred_logit.sigmoid(), batch_masks) + self.loss_weights[1]*alpha_loss + self.loss_weights[2]*inter_bce
             else:
                 loss = self.loss_fn(pred_logit.sigmoid(), batch_masks)
