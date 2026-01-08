@@ -436,7 +436,7 @@ class SamAdaptor(nn.Module):
             target_mask = self.upsample(tgt_proj)
             clutter_mask = self.upsample(clt_proj)
             alpha = self.alpha_head(upscaled_embedding+clt_features[1])
-            corrected_embedding = upscaled_embedding + alpha * (w_c[..., None, None] * tgt_proj - w_t[..., None, None] * clt_proj)
+            corrected_embedding = upscaled_embedding + alpha * (torch.sigmoid(tgt_proj)*upscaled_embedding - torch.sigmoid(clt_proj)*upscaled_embedding)
             return_dict = {
                 "target_mask": target_mask,
                 "clutter_mask": clutter_mask,
