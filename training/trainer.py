@@ -152,7 +152,7 @@ class Trainer:
                 alpha_loss = AlphaLoss(return_dict, clutter_labels, batch_masks)
                 tgt_inter_bce = self.loss_fn(return_dict["target_mask"].sigmoid(), batch_masks)
                 clt_inter_bce = self.loss_fn(return_dict["clutter_mask"].sigmoid(), clutter_labels)
-                inter_bce = tgt_inter_bce + 0.5 * clt_inter_bce
+                inter_bce = tgt_inter_bce + 0.1 * clt_inter_bce
                 loss = self.loss_weights[0]*pred_loss + self.loss_weights[1]*alpha_loss + self.loss_weights[2]*inter_bce
             else:
                 loss = pred_loss
