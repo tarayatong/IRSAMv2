@@ -82,7 +82,7 @@ def main():
     )
     parser.add_argument(
         "--loss_weights",
-        default=[1.0, 0.1, 0.5],
+        default=[1.0, 0.0, 0.1],
         type=list,
         help="Weights for loss functions",
     )
@@ -212,7 +212,6 @@ def main():
                     best_fscore = fscore
                     trainer.save_checkpoint(
                         save_path=os.path.join(args.save_dir, "best.pt"),
-                        extra={"best_fscore": best_fscore}
                     )
                     if is_main_process:
                         logger.info(f"New best F-score: {best_fscore:.4f}, saved best.pt")

@@ -419,11 +419,8 @@ class SamAdaptor(nn.Module):
 
         B, C, W, H = image_embeddings.shape
         src = self.deep_conv_block(image_embeddings)
-        src = self.feature_norm(src)
         token = self.mask_token.weight.unsqueeze(0).expand(B, -1, -1)
         hs, src = self.decoder_transformer(src, image_pe, token)
-        hs = self.token_norm(hs)
-        src = self.output_feature_norm(src)
         src = src.transpose(1, 2).contiguous().view(B, self.decoder_dim, W, H)
         upscaled_embedding = self.output_upscaling(src)
         if self.use_alpha:
