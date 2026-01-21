@@ -170,7 +170,7 @@ class EmbeddingOptimizer(nn.Module):
         clutter_mask = self.upsample(clt_proj)
         alpha = self.alpha_head(alpha_in)
         if self.hard_fa:
-            corrected_embedding = embedding + alpha * (w_t[..., None, None] * tgt_proj - w_t[..., None, None] * clt_proj)
+            corrected_embedding = embedding + alpha * (w_t[..., None, None] * clt_proj - w_c[..., None, None] * tgt_proj)
         else:
             corrected_embedding = embedding + alpha * (w_c[..., None, None] * tgt_proj + w_t[..., None, None] * clt_proj)
         
