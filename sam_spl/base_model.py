@@ -172,7 +172,7 @@ class EmbeddingOptimizer(nn.Module):
         if self.hard_fa:
             corrected_embedding = embedding + alpha * (w_t[..., None, None] * clt_proj - w_c[..., None, None] * tgt_proj)
         else:
-            corrected_embedding = embedding + alpha * (w_c[..., None, None] * tgt_proj + w_t[..., None, None] * clt_proj)
+            corrected_embedding = embedding - alpha * (w_t[..., None, None] * clt_proj)
         
         return_dict = {
             "target_mask": target_mask,
@@ -261,7 +261,7 @@ class SamAdaptor(nn.Module):
             ])
             
             # Use the new EmbeddingOptimizer
-            self.embedding_optimizer = EmbeddingOptimizer(self.decoder_dim, dense_low_channels[0], dense_low_channels[0], self.num_mask_tokens, 4)
+            self.embedding_optimizer = EmbeddingOptimizer(self.decoder_dim, dense_low_channels[0], dense_low_channels[0], self.num_mask_tokens, 4, False)
             self.embedding_optimizer_up = nn.ModuleList([
                 EmbeddingOptimizer(dense_low_channels[i], dense_low_channels[i]//2, 1, self.num_mask_tokens, 2**(len(dense_low_channels)-1-i)) for i in range(len(dense_low_channels))
             ])

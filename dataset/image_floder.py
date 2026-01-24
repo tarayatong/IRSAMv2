@@ -393,7 +393,7 @@ class ImageFolder(Dataset):
                 blurred = cv2.GaussianBlur(edge, (3, 3), 0)
                 
                 # Dilate GT to create a buffer zone
-                kernel = np.ones((5, 5), np.uint8)
+                kernel = np.ones((7, 7), np.uint8)
                 dilated_gt = cv2.dilate((gt_np > 0).astype(np.uint8), kernel, iterations=1)
                 
                 clutter_label_np = ((blurred) > 0).astype(np.float32) * (1 - dilated_gt)
