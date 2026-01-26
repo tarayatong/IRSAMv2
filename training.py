@@ -82,7 +82,7 @@ def main():
     )
     parser.add_argument(
         "--loss_weights",
-        default=[1.0, 0.0, 0.1],
+        default=[1.0, 0.5, 0.1],
         type=list,
         help="Weights for loss functions",
     )
