@@ -160,7 +160,10 @@ class EmbeddingOptimizer(nn.Module):
         clt_proj = (w_c[..., None, None] * embedding).sum(dim=1, keepdim=True)
         target_mask = self.upsample(tgt_proj)
         clutter_mask = self.upsample(clt_proj)
-        corrected_embedding = embedding - w_t[..., None, None] * clt_proj - w_c_ir[..., None, None] * tgt_proj
+        if self.use_proj:
+            corrected_embedding = embedding + w_t[..., None, None] * (tgt_proj - clt_proj) + w_c_ir[..., None, None] * (clt_proj - tgt_proj)
+        else:
+            corrected_embedding = embedding - w_t[..., None, None] * clt_proj
         
         return_dict = {
             "target_mask": target_mask,
