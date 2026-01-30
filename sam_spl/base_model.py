@@ -132,7 +132,7 @@ def build_dynamic_conv(skip_channel: int, n: int) -> nn.Sequential:
 
 
 class EmbeddingOptimizer(nn.Module):
-    def __init__(self, decoder_dim, dense_low_channel, alpha_chn,num_mask_tokens=2, upsample_scale=2, use_proj=True):
+    def __init__(self, decoder_dim, dense_low_channel, alpha_chn,num_mask_tokens=2, upsample_scale=2, use_proj=False):
         super().__init__()
         # Upsample modules (list of upsamplers)
         self.upsample = nn.Upsample(scale_factor=upsample_scale, mode='bilinear', align_corners=False)
@@ -141,6 +141,7 @@ class EmbeddingOptimizer(nn.Module):
             for _ in range(num_mask_tokens)
         ])
         self.use_proj = use_proj
+        self.layer_norm = nn.LayerNorm(dense_low_channel)
 
     def forward(self, embedding, w_t, w_c):
         """
@@ -153,17 +154,19 @@ class EmbeddingOptimizer(nn.Module):
         
         hyper_tgt = self.hypernetworks_mlp[0](w_t)
         hyper_clt = self.hypernetworks_mlp[1](w_c)
-        w_c = F.normalize(hyper_clt, dim=1, eps=1e-6)
-        w_t = F.normalize(hyper_tgt, dim=1, eps=1e-6)
-        w_c_ir = w_c * F.relu(-w_t)
+        # w_t = F.normalize(hyper_tgt, dim=1, eps=1e-6)
+        # w_c = F.normalize(hyper_clt, dim=1, eps=1e-6)
+        w_t = self.layer_norm(hyper_tgt)
+        w_c = self.layer_norm(hyper_clt)
+        w_c_ir = w_c - (w_c*w_t).sum(dim=1, keepdim=True)/ (w_t * w_t).sum(dim=1, keepdim=True) * w_t
         tgt_proj = (w_t[..., None, None] * embedding).sum(dim=1, keepdim=True)
         clt_proj = (w_c[..., None, None] * embedding).sum(dim=1, keepdim=True)
         target_mask = self.upsample(tgt_proj)
         clutter_mask = self.upsample(clt_proj)
         if self.use_proj:
-            corrected_embedding = embedding + w_t[..., None, None] * (tgt_proj - clt_proj) + w_c_ir[..., None, None] * (clt_proj - tgt_proj)
+            corrected_embedding = w_t[..., None, None] * (tgt_proj - clt_proj) + w_c_ir[..., None, None] * (clt_proj - tgt_proj)
         else:
-            corrected_embedding = embedding - w_t[..., None, None] * clt_proj
+            corrected_embedding = embedding + w_t[..., None, None] * (tgt_proj - clt_proj) + w_c_ir[..., None, None] * (clt_proj - tgt_proj)
         
         return_dict = {
             "target_mask": target_mask,
@@ -251,7 +254,7 @@ class SamAdaptor(nn.Module):
             ])
             
             # Use the new EmbeddingOptimizer
-            self.embedding_optimizer = EmbeddingOptimizer(self.decoder_dim, dense_low_channels[0], dense_low_channels[0], self.num_mask_tokens, 4, False)
+            self.embedding_optimizer = EmbeddingOptimizer(self.decoder_dim, dense_low_channels[0], dense_low_channels[0], self.num_mask_tokens, 4, True)
             self.embedding_optimizer_up = nn.ModuleList([
                 EmbeddingOptimizer(dense_low_channels[i], dense_low_channels[i]//2, 1, self.num_mask_tokens, 2**(len(dense_low_channels)-1-i)) for i in range(len(dense_low_channels))
             ])
@@ -459,10 +462,10 @@ class SamAdaptor(nn.Module):
             deep_dict = lowest_dict
             for i, (feature_map, skip_conv, up_decoder) in enumerate(zip(dense_features[::-1], self.skip_convs, self.up_decoders)):
                 deep_feat = up_decoder(deep_feat, skip_conv(feature_map))
-                masks.append(deep_feat)
                 # alpha_in = F.interpolate(deep_dict['alpha'], deep_feat.shape[-2:], mode='bilinear', align_corners=False)
                 deep_dict = self.embedding_optimizer_up[i](deep_feat, deep_dict["w_t"], deep_dict["w_c"])
                 deep_feat = deep_dict["corrected_embedding"]
+                masks.append(deep_feat)
                 return_dicts.append(deep_dict)
         else:
             corrected_embedding = upscaled_embedding

@@ -91,8 +91,14 @@ def batch_tp_fp_fn(predict, target, nclass):
     maxi = nclass
     nbins = nclass
 
-    # predict = (output.detach().numpy() > 0).astype('int64')  # P
-    # target = target.numpy().astype('int64')  # T
+    if hasattr(predict, 'numpy'):
+        predict = predict.numpy()
+    if hasattr(target, 'numpy'):
+        target = target.numpy()
+        
+    predict = predict.astype('int64')
+    target = target.astype('int64')
+    
     intersection = predict * (predict == target)  # TP
 
     # areas of intersection and union

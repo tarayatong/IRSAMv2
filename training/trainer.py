@@ -157,7 +157,7 @@ class Trainer:
                     tgt_inter_bce = self.loss_fn(return_dict["target_mask"].sigmoid(), batch_masks)
                     clt_inter_bce = self.loss_fn(return_dict["clutter_mask"].sigmoid(), clutter_labels)
                     inter_bce += tgt_inter_bce + 0.1 * clt_inter_bce
-                    cos_loss += F.cosine_similarity(return_dict["w_t"], return_dict["w_c"], dim=1).mean()
+                    cos_loss += (F.cosine_similarity(return_dict["w_t"], return_dict["w_c"], dim=1).mean())**2
                 loss = self.loss_weights[0]*pred_loss + self.loss_weights[1]*cos_loss + self.loss_weights[2]*inter_bce
             else:
                 loss = pred_loss
