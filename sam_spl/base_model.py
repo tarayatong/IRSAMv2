@@ -465,7 +465,8 @@ class SamAdaptor(nn.Module):
                 # alpha_in = F.interpolate(deep_dict['alpha'], deep_feat.shape[-2:], mode='bilinear', align_corners=False)
                 deep_dict = self.embedding_optimizer_up[i](deep_feat, deep_dict["w_t"], deep_dict["w_c"])
                 deep_feat = deep_dict["corrected_embedding"]
-                masks.append(deep_feat)
+                deep_mask = (deep_dict["w_t"][..., None, None] * deep_feat).sum(dim=1, keepdim=True)
+                masks.append(deep_mask)
                 return_dicts.append(deep_dict)
         else:
             corrected_embedding = upscaled_embedding
@@ -508,7 +509,7 @@ class SamAdaptor(nn.Module):
         masks = []
         for mask_conv, feature_map in zip(self.reduction_convs[::-1], deep_feats[::-1]):
             mask_0 = F.interpolate(feature_map, image_size, mode="bilinear", align_corners=False)
-            mask_0 = mask_conv(mask_0)
+            # mask_0 = mask_conv(mask_0)
             masks.append(mask_0)
 
         return masks
