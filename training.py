@@ -58,7 +58,7 @@ def main():
     )
     parser.add_argument(
         "--eta_min",
-        default=1e-6,
+        default=1e-4,
         type=float,
         help="Minimum learning rate for scheduler",
     )

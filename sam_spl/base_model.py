@@ -15,7 +15,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from sam_spl.base_layer import DenseBlock, SELayer, VGGBlock, Res_CBAM_block
-from sam_spl.UpBlock_layer import UpBlock_attention
+from sam_spl.UpBlock_layer import UpBlock_attention, UpBlock
 from sam_spl.hieradet import Hiera
 from sam_spl.pmt_generator import MultiScaleBlock, MultiScalePositionalEncoder
 
@@ -124,7 +124,8 @@ def build_dynamic_conv(skip_channel: int, n: int) -> nn.Sequential:
 
     for _ in range(4 - n):
         layers.extend([
-            nn.Conv2d(skip_channel, skip_channel, kernel_size=2, stride=2),
+            nn.Conv2d(skip_channel, skip_channel, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(skip_channel),
             nn.GELU()
         ])
     
@@ -132,7 +133,7 @@ def build_dynamic_conv(skip_channel: int, n: int) -> nn.Sequential:
 
 
 class EmbeddingOptimizer(nn.Module):
-    def __init__(self, decoder_dim, dense_low_channel, alpha_chn,num_mask_tokens=2, upsample_scale=2, use_proj=False):
+    def __init__(self, decoder_dim, dense_low_channel, alpha_chn,num_mask_tokens=2, upsample_scale=2, deep_layer=False):
         super().__init__()
         # Upsample modules (list of upsamplers)
         self.upsample = nn.Upsample(scale_factor=upsample_scale, mode='bilinear', align_corners=False)
@@ -148,10 +149,10 @@ class EmbeddingOptimizer(nn.Module):
             nn.BatchNorm2d(1),
             nn.GELU(),
         )
-        self.use_proj = use_proj
+        self.deep_layer = deep_layer
         self.layer_norm = nn.LayerNorm(dense_low_channel)
 
-    def forward(self, embedding, w_t, w_c, alpha_in):
+    def forward(self, embedding, w_t, w_c, alpha_in, layer_index):
         """
         Args:
             upscaled_embedding: [B, C, H, W]
@@ -172,8 +173,11 @@ class EmbeddingOptimizer(nn.Module):
         target_mask = self.upsample(tgt_proj)
         clutter_mask = self.upsample(clt_proj)
         alpha = self.alpha_head(alpha_in)
-        corrected_embedding = embedding + alpha * (w_t[..., None, None] * (tgt_proj - clt_proj) + w_c_ir[..., None, None] * (clt_proj - tgt_proj))
-        
+        # if self.deep_layer:
+        corrected_embedding = embedding - alpha * w_t[..., None, None] * clt_proj
+        # else:
+        #     corrected_embedding = embedding + w_t[..., None, None] * tgt_proj - alpha * w_t[..., None, None] * clt_proj
+
         return_dict = {
             "target_mask": target_mask,
             "clutter_mask": clutter_mask,
@@ -233,6 +237,7 @@ class SamAdaptor(nn.Module):
         self.skip_channel_gen = dense_low_channels
         self.mask_channel_gen = [ch // 2 for ch in dense_low_channels]
         if self.use_sam_decoder:
+            # self.up_decoders = self._initialize_up_decoders()
             self.up_decoders, self.skip_convs = self._initialize_up_decoders_and_skip_convs()
         else:
             self.up_decoders, self.skip_convs = self._initialize_up_decoders_and_skip_convs2()
@@ -261,9 +266,9 @@ class SamAdaptor(nn.Module):
             ])
             
             # Use the new EmbeddingOptimizer
-            self.embedding_optimizer = EmbeddingOptimizer(self.decoder_dim, dense_low_channels[0], dense_low_channels[0], self.num_mask_tokens, 4, True)
+            self.embedding_optimizer = EmbeddingOptimizer(self.decoder_dim, dense_low_channels[0], dense_low_channels[0], self.num_mask_tokens, 4)
             self.embedding_optimizer_up = nn.ModuleList([
-                EmbeddingOptimizer(dense_low_channels[i], dense_low_channels[i]//2, 1, self.num_mask_tokens, 2**(len(dense_low_channels)-1-i)) for i in range(len(dense_low_channels))
+                EmbeddingOptimizer(dense_low_channels[i], dense_low_channels[i]//2, 1, self.num_mask_tokens, 2**(len(dense_low_channels)-1-i), bool(i>0)) for i in range(len(dense_low_channels))
             ])
             self.image_pe_encoder = MultiScalePositionalEncoder(
                 in_chans=pe_inch,
@@ -322,7 +327,11 @@ class SamAdaptor(nn.Module):
         up_decoders = nn.ModuleList()
         skip_convs = nn.ModuleList()
         for in_ch in self.skip_channel_gen:
-            up_decoders.append(UpBlock_attention(in_ch, in_ch // 2))
+            if in_ch == self.skip_channel_gen[0]:
+                use_upsample = False
+            else:
+                use_upsample = True
+            up_decoders.append(UpBlock_attention(in_ch, in_ch // 2, use_upsample=use_upsample))
             skip_convs.append(
                 nn.Sequential(
                     SELayer(in_ch),
@@ -334,6 +343,24 @@ class SamAdaptor(nn.Module):
             )
 
         return up_decoders, skip_convs
+
+    def _initialize_up_decoders(self) -> tuple:
+        """Initialize up-sampling decoder blocks and skip convolution modules.
+
+        Returns
+        -------
+        tuple
+            A tuple ``(up_decoders, skip_convs)`` where each element is an
+            ``nn.ModuleList`` containing the corresponding modules.
+        """
+
+        up_decoders = nn.ModuleList()
+        for in_ch in self.skip_channel_gen:
+            if in_ch == self.skip_channel_gen[0]:
+                up_decoders.append(UpBlock(in_ch, in_ch // 2, use_upsample=False))
+            else:
+                up_decoders.append(UpBlock(in_ch, in_ch // 2))
+        return up_decoders
 
     def _initialize_up_decoders_and_skip_convs2(self) -> tuple:
         """Variant initialization that uses ``self.dense_low_channels[1:]``
@@ -462,7 +489,7 @@ class SamAdaptor(nn.Module):
         if self.use_alpha:
             return_dicts=[]
             alpha_in = upscaled_embedding + clt_features[1]
-            lowest_dict = self.embedding_optimizer(upscaled_embedding, hs[:,0,:], hs[:,1,:], alpha_in)
+            lowest_dict = self.embedding_optimizer(upscaled_embedding, hs[:,0,:], hs[:,1,:], alpha_in, layer_index=0)
             corrected_embedding = lowest_dict["corrected_embedding"]
             return_dicts.append(lowest_dict)
             deep_feat = self.proj_block(corrected_embedding)
@@ -470,7 +497,7 @@ class SamAdaptor(nn.Module):
             for i, (feature_map, skip_conv, up_decoder) in enumerate(zip(dense_features[::-1], self.skip_convs, self.up_decoders)):
                 deep_feat = up_decoder(deep_feat, skip_conv(feature_map))
                 alpha_in = F.interpolate(deep_dict['alpha'], deep_feat.shape[-2:], mode='bilinear', align_corners=False)
-                deep_dict = self.embedding_optimizer_up[i](deep_feat, deep_dict["w_t"], deep_dict["w_c"], alpha_in)
+                deep_dict = self.embedding_optimizer_up[i](deep_feat, deep_dict["w_t"], deep_dict["w_c"], alpha_in, layer_index=i+1)
                 deep_feat = deep_dict["corrected_embedding"]
                 deep_mask = (deep_dict["w_t"][..., None, None] * deep_feat).sum(dim=1, keepdim=True)
                 masks.append(deep_mask)

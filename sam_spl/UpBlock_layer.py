@@ -19,16 +19,22 @@ class SE_Operate(nn.Module):
 
 
 class CrossAtt(nn.Module):
-    def __init__(self, in_channels: int, out_channel: int, MC=True):
+    def __init__(self, in_channels: int, out_channel: int, MC=True, use_upsample=True):
         super().__init__()
         self.se_skip_att = SE_Operate(in_channels, out_channel)
         self.se_input_att = SE_Operate(in_channels, out_channel)
-        self.up_sample = nn.Upsample(scale_factor=2, mode="bilinear", align_corners=True)
+        if use_upsample:
+            self.up_sample = nn.Upsample(scale_factor=2, mode="bilinear", align_corners=True)
+        else:
+            self.up_sample = None
         self.MC = MC
         # self.up_sample = nn.ConvTranspose2d(in_channels, in_channels, kernel_size=2, stride=2)
 
     def forward(self, x: torch.tensor, skip_x: torch.tensor):
-        x_up = self.up_sample(x)
+        if self.up_sample is not None:
+            x_up = self.up_sample(x)
+        else:
+            x_up = x
         if self.MC:
             x_up_att = self.se_input_att(x_up, skip_x)
             x_skip_att = self.se_skip_att(skip_x, x)
@@ -39,19 +45,30 @@ class CrossAtt(nn.Module):
 
 
 class UpBlock_attention(nn.Module):
-    def __init__(self, in_channels: int, out_channels: int, nb_Conv: int = 2, MC=True):
+    def __init__(self, in_channels: int, out_channels: int, nb_Conv: int = 2, MC=True, use_upsample: bool = True):
         super().__init__()
-        self.cross_att = CrossAtt(in_channels=in_channels, out_channel=in_channels, MC=MC)
+        self.cross_att = CrossAtt(in_channels=in_channels, out_channel=in_channels, MC=MC, use_upsample=use_upsample)
 
         # self.nConvs = _make_nConv(in_channels, out_channels, nb_Conv)
         self.nConvs = _make_nConv(in_channels * 2, out_channels, nb_Conv)
-
-
 
     def forward(self, x: torch.tensor, skip_x: torch.tensor):
         out = self.cross_att(x, skip_x)
         return self.nConvs(out)
 
+
+class UpBlock(nn.Module):
+    def __init__(self, in_channels: int, out_channels: int, nb_Conv: int = 2, use_upsample: bool = True):
+        super().__init__()
+        self.nConvs = _make_nConv(in_channels, out_channels, nb_Conv)
+        if use_upsample:
+            self.upsample = nn.Upsample(scale_factor=2, mode="bilinear", align_corners=True)
+        else:
+            self.upsample = None
+    def forward(self, x: torch.tensor):
+        if self.upsample is not None:
+            x = self.upsample(x)
+        return self.nConvs(x)
 
 def _make_nConv(in_channels: int, out_channels: int, nb_Conv: int):
     layers = []

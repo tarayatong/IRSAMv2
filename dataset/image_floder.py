@@ -85,6 +85,80 @@ def to_float_div_255(x):
     return x.float() / 255.0
 
 
+def directional_sensitive_edge_detection(im_np, mask_np, threshold=33.0):
+    """
+    Hybrid spot detection using Laplacian and Top-Hat transform.
+    Thresholds are adaptively determined by the response intensity at target locations.
+    
+    Args:
+        im_np: [H, W, C] or [H, W] numpy array, uint8
+        mask_np: [H, W] numpy array, uint8 (0 or 255/1), Ground Truth Mask
+        threshold: Fallback threshold if no target exists
+    Returns:
+        edge_mask: [H, W] numpy array, uint8 (0 or 255)
+    """
+    # Ensure input is grayscale and float32
+    if len(im_np.shape) == 3:
+        img_gray = cv2.cvtColor(im_np, cv2.COLOR_RGB2GRAY)
+    else:
+        img_gray = im_np
+    
+    # Pre-calculate target locations for adaptive thresholding
+    # Dilate mask slightly to capture target neighborhood if mask is too small
+    if mask_np.sum() > 0:
+        kernel_dilate = np.ones((3, 3), np.uint8)
+        mask_dilated = cv2.dilate((mask_np > 0).astype(np.uint8), kernel_dilate, iterations=1)
+        target_indices = (mask_dilated > 0)
+    else:
+        target_indices = None
+
+    # --- Branch 1: Laplacian (Focus on sharp gradients/spots) ---
+    img_tensor = torch.from_numpy(img_gray).float().unsqueeze(0).unsqueeze(0) # [1, 1, H, W]
+    k_laplace = torch.tensor([[-1, -1, -1],
+                              [-1,  8, -1],
+                              [-1, -1, -1]], dtype=torch.float32).view(1, 1, 3, 3)
+    response = torch.nn.functional.conv2d(img_tensor, k_laplace, padding=1)
+    response_abs = torch.abs(response).squeeze().numpy()
+    
+    # Adaptive thresholding for Laplacian
+    if target_indices is not None:
+        # Calculate mean response in target area
+        target_response = response_abs[target_indices]
+        lap_threshold = target_response.mean() * 0.5 # Relax threshold to capture slightly weaker clutter
+    else:
+        lap_threshold = im_np.mean() * 0.5 # Approximate scaling for Laplacian if no target
+        
+    laplace_mask = (response_abs > lap_threshold)
+
+    # --- Branch 2: Top-Hat Transform (Focus on local brightness peaks) ---
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    tophat = cv2.morphologyEx(img_gray, cv2.MORPH_TOPHAT, kernel)
+    
+    # Adaptive thresholding for Top-Hat
+    if target_indices is not None:
+        target_tophat = tophat[target_indices]
+        tophat_threshold = target_tophat.mean()* 0.5 # Relax threshold
+    else:
+        tophat_threshold = threshold
+        
+    tophat_mask = (tophat > tophat_threshold)
+
+    # --- Combine & Smooth ---
+    # Union of both methods
+    combined_mask = np.logical_or(laplace_mask, tophat_mask).astype(np.uint8) * 255
+    
+    # Optional: Apply slight smoothing/dilation to connect fragmented spots
+    # Using median blur to remove salt-and-pepper noise while keeping edges
+    combined_mask = cv2.medianBlur(combined_mask, 3)
+    
+    # Debug Visualization
+    # Image.fromarray(laplace_mask.astype(np.uint8)*255).save('results/vis_res/clutter_label/laplace_mask.png')
+    # Image.fromarray(tophat_mask.astype(np.uint8)*255).save('results/vis_res/clutter_label/tophat_mask.png')
+    # Image.fromarray(combined_mask).save('results/vis_res/clutter_label/combined_mask.png')
+    
+    return combined_mask
+
+
 # Modify from https://github.com/xdFai/SCTransNet/blob/main/dataset.py and https://github.com/YeRen123455/Infrared-Small-Target-Detection
 class ImageFolder(Dataset):
     def __init__(
@@ -314,25 +388,23 @@ class ImageFolder(Dataset):
             gt_np = np.array(mask)
             
             imgt = im_np * (gt_np > 0)[:, :, None]
-            
-            t1 = im_np.mean()
+            kernel = np.ones((5, 5), np.uint8)
+            dilated_gt = cv2.dilate((gt_np > 0).astype(np.uint8), kernel, iterations=1)
+            target_bg = im_np[(dilated_gt-gt_np) > 0]
             target_pixels = imgt[imgt > 0]
             if len(target_pixels) > 0:
                 mean_target = target_pixels.mean()
             else:
                 mean_target = 0
+            t1 = abs(mean_target - target_bg.mean())
+            t2 = abs(mean_target - im_np.mean())
             
-            t2 = abs(mean_target - t1)
-            
-            edge = cv2.Canny(im_np, int(t1), int(t2)) # Canny expects int thresholds usually
+            # edge = cv2.Canny(im_np, int(t1), int(t2)) # Canny expects int thresholds usually
+            edge = directional_sensitive_edge_detection(im_np, gt_np, threshold=min(t1, t2))
             blurred = cv2.GaussianBlur(edge, (3, 3), 0)
             
             clutter_label_np = ((blurred) > 0).astype(np.uint8) * 255 
             
-            # Dilate GT to create a buffer zone
-            kernel = np.ones((5, 5), np.uint8)
-            dilated_gt = cv2.dilate((gt_np > 0).astype(np.uint8), kernel, iterations=1)
-
             # Mask out Clutter using dilated GT
             clutter_label_np = clutter_label_np * (1 - dilated_gt)
             clutter_label = Image.fromarray(clutter_label_np.astype(np.uint8))
