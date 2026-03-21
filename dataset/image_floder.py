@@ -384,7 +384,6 @@ class ImageFolder(Dataset):
             # mask_array[mask_array >= 127] = 255
             # mask_array[mask_array < 127] = 0
             # mask is already binary-like 0/255
-            
             gt_np = np.array(mask)
             
             imgt = im_np * (gt_np > 0)[:, :, None]
@@ -398,11 +397,9 @@ class ImageFolder(Dataset):
                 mean_target = 0
             t1 = abs(mean_target - target_bg.mean())
             t2 = abs(mean_target - im_np.mean())
-            
             # edge = cv2.Canny(im_np, int(t1), int(t2)) # Canny expects int thresholds usually
             edge = directional_sensitive_edge_detection(im_np, gt_np, threshold=min(t1, t2))
             blurred = cv2.GaussianBlur(edge, (3, 3), 0)
-            
             clutter_label_np = ((blurred) > 0).astype(np.uint8) * 255 
             
             # Mask out Clutter using dilated GT
@@ -456,20 +453,40 @@ class ImageFolder(Dataset):
                 
                 gt_np = (mask.numpy().squeeze() * 255).astype(np.uint8)
                 
-                imgt = im_unnorm * (gt_np > 0)[:, :, None]
-                t1 = im_unnorm.mean()
-                mean_target = imgt[imgt > 0].mean() if imgt.sum() > 0 else 0
-                t2 = abs(mean_target - t1)
-                
-                edge = cv2.Canny(im_unnorm, int(t1), int(t2))
-                blurred = cv2.GaussianBlur(edge, (3, 3), 0)
-                
-                # Dilate GT to create a buffer zone
-                kernel = np.ones((7, 7), np.uint8)
+                # imgt = im_unnorm * (gt_np > 0)[:, :, None]
+                # t1 = im_unnorm.mean()
+                # mean_target = imgt[imgt > 0].mean() if imgt.sum() > 0 else 0
+                # t2 = abs(mean_target - t1)
+                #
+                # edge = cv2.Canny(im_unnorm, int(t1), int(t2))
+                # blurred = cv2.GaussianBlur(edge, (3, 3), 0)
+                #
+                # # Dilate GT to create a buffer zone
+                # kernel = np.ones((7, 7), np.uint8)
+                # dilated_gt = cv2.dilate((gt_np > 0).astype(np.uint8), kernel, iterations=1)
+                #
+                # clutter_label_np = ((blurred) > 0).astype(np.float32) * (1 - dilated_gt)
+                # clutter_label = torch.from_numpy(clutter_label_np).unsqueeze(0)
+
+                imgt = im_np * (gt_np > 0)[:, :, None]
+                kernel = np.ones((5, 5), np.uint8)
                 dilated_gt = cv2.dilate((gt_np > 0).astype(np.uint8), kernel, iterations=1)
-                
-                clutter_label_np = ((blurred) > 0).astype(np.float32) * (1 - dilated_gt)
-                clutter_label = torch.from_numpy(clutter_label_np).unsqueeze(0)
+                target_bg = im_np[(dilated_gt - gt_np) > 0]
+                target_pixels = imgt[imgt > 0]
+                if len(target_pixels) > 0:
+                    mean_target = target_pixels.mean()
+                else:
+                    mean_target = 0
+                t1 = abs(mean_target - target_bg.mean())
+                t2 = abs(mean_target - im_np.mean())
+                # edge = cv2.Canny(im_np, int(t1), int(t2)) # Canny expects int thresholds usually
+                edge = directional_sensitive_edge_detection(im_np, gt_np, threshold=min(t1, t2))
+                blurred = cv2.GaussianBlur(edge, (3, 3), 0)
+                clutter_label_np = ((blurred) > 0).astype(np.uint8) * 255
+
+                # Mask out Clutter using dilated GT
+                clutter_label_np = clutter_label_np * (1 - dilated_gt)
+                clutter_label = Image.fromarray(clutter_label_np.astype(np.uint8))
 
             else:
                 image = Normalized(np.array(image, dtype=np.float32), self.data_set)
@@ -493,20 +510,39 @@ class ImageFolder(Dataset):
                 
                 gt_np = (mask.numpy().squeeze() * 255).astype(np.uint8)
                 
-                imgt = im_unnorm * (gt_np > 0)[:, :, None]
-                t1 = im_unnorm.mean()
-                mean_target = imgt[imgt > 0].mean() if imgt.sum() > 0 else 0
-                t2 = abs(mean_target - t1)
-                
-                edge = cv2.Canny(im_unnorm, int(t1), int(t2))
-                blurred = cv2.GaussianBlur(edge, (3, 3), 0)
-                
-                # Dilate GT to create a buffer zone
+                # imgt = im_unnorm * (gt_np > 0)[:, :, None]
+                # t1 = im_unnorm.mean()
+                # mean_target = imgt[imgt > 0].mean() if imgt.sum() > 0 else 0
+                # t2 = abs(mean_target - t1)
+                #
+                # edge = cv2.Canny(im_unnorm, int(t1), int(t2))
+                # blurred = cv2.GaussianBlur(edge, (3, 3), 0)
+                #
+                # # Dilate GT to create a buffer zone
+                # kernel = np.ones((5, 5), np.uint8)
+                # dilated_gt = cv2.dilate((gt_np > 0).astype(np.uint8), kernel, iterations=1)
+                #
+                # clutter_label_np = ((blurred) > 0).astype(np.float32) * (1 - dilated_gt)
+                # clutter_label = torch.from_numpy(clutter_label_np).unsqueeze(0)
+                imgt = im_np * (gt_np > 0)[:, :, None]
                 kernel = np.ones((5, 5), np.uint8)
                 dilated_gt = cv2.dilate((gt_np > 0).astype(np.uint8), kernel, iterations=1)
-                
-                clutter_label_np = ((blurred) > 0).astype(np.float32) * (1 - dilated_gt)
-                clutter_label = torch.from_numpy(clutter_label_np).unsqueeze(0)
+                target_bg = im_np[(dilated_gt - gt_np) > 0]
+                target_pixels = imgt[imgt > 0]
+                if len(target_pixels) > 0:
+                    mean_target = target_pixels.mean()
+                else:
+                    mean_target = 0
+                t1 = abs(mean_target - target_bg.mean())
+                t2 = abs(mean_target - im_np.mean())
+                # edge = cv2.Canny(im_np, int(t1), int(t2)) # Canny expects int thresholds usually
+                edge = directional_sensitive_edge_detection(im_np, gt_np, threshold=min(t1, t2))
+                blurred = cv2.GaussianBlur(edge, (3, 3), 0)
+                clutter_label_np = ((blurred) > 0).astype(np.uint8) * 255
+
+                # Mask out Clutter using dilated GT
+                clutter_label_np = clutter_label_np * (1 - dilated_gt)
+                clutter_label = Image.fromarray(clutter_label_np.astype(np.uint8))
 
             mask = (mask > 0).to(torch.float32)
             
@@ -517,30 +553,49 @@ class ImageFolder(Dataset):
             gt_np = np.array(mask)
             
             # Check and fix size mismatch
-            if im_np.shape[:2] != gt_np.shape[:2]:
-                gt_np = cv2.resize(gt_np, (im_np.shape[1], im_np.shape[0]), interpolation=cv2.INTER_NEAREST)
-                mask = Image.fromarray(gt_np)
-
+            # if im_np.shape[:2] != gt_np.shape[:2]:
+            #     gt_np = cv2.resize(gt_np, (im_np.shape[1], im_np.shape[0]), interpolation=cv2.INTER_NEAREST)
+            #     mask = Image.fromarray(gt_np)
+            #
+            # imgt = im_np * (gt_np > 0)[:, :, None]
+            #
+            # t1 = im_np.mean()
+            # target_pixels = imgt[imgt > 0]
+            # if len(target_pixels) > 0:
+            #     mean_target = target_pixels.mean()
+            # else:
+            #     mean_target = 0 # Fallback if no target pixels
+            #
+            # t2 = abs(mean_target - t1)
+            #
+            # edge = cv2.Canny(im_np, int(t1), int(t2))
+            # blurred = cv2.GaussianBlur(edge, (3, 3), 0)
+            #
+            # clutter_label_np = ((blurred) > 0).astype(np.uint8) * 255
+            #
+            # # Dilate GT to create a buffer zone
+            # kernel = np.ones((5, 5), np.uint8)
+            # dilated_gt = cv2.dilate((gt_np > 0).astype(np.uint8), kernel, iterations=1)
+            #
+            # # Mask out Clutter using dilated GT
+            # clutter_label_np = clutter_label_np * (1 - dilated_gt)
+            # clutter_label = Image.fromarray(clutter_label_np.astype(np.uint8))
             imgt = im_np * (gt_np > 0)[:, :, None]
-            
-            t1 = im_np.mean()
+            kernel = np.ones((5, 5), np.uint8)
+            dilated_gt = cv2.dilate((gt_np > 0).astype(np.uint8), kernel, iterations=1)
+            target_bg = im_np[(dilated_gt - gt_np) > 0]
             target_pixels = imgt[imgt > 0]
             if len(target_pixels) > 0:
                 mean_target = target_pixels.mean()
             else:
-                mean_target = 0 # Fallback if no target pixels
-            
-            t2 = abs(mean_target - t1)
-            
-            edge = cv2.Canny(im_np, int(t1), int(t2))
+                mean_target = 0
+            t1 = abs(mean_target - target_bg.mean())
+            t2 = abs(mean_target - im_np.mean())
+            # edge = cv2.Canny(im_np, int(t1), int(t2)) # Canny expects int thresholds usually
+            edge = directional_sensitive_edge_detection(im_np, gt_np, threshold=min(t1, t2))
             blurred = cv2.GaussianBlur(edge, (3, 3), 0)
-            
             clutter_label_np = ((blurred) > 0).astype(np.uint8) * 255
-            
-            # Dilate GT to create a buffer zone
-            kernel = np.ones((5, 5), np.uint8)
-            dilated_gt = cv2.dilate((gt_np > 0).astype(np.uint8), kernel, iterations=1)
-            
+
             # Mask out Clutter using dilated GT
             clutter_label_np = clutter_label_np * (1 - dilated_gt)
             clutter_label = Image.fromarray(clutter_label_np.astype(np.uint8))
