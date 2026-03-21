@@ -147,10 +147,10 @@ class EmbeddingOptimizer(nn.Module):
             nn.GELU(),
             nn.Conv2d(4, 1, kernel_size=3, padding=1, stride=1),
             nn.BatchNorm2d(1),
-            nn.GELU(),
+            nn.Sigmoid(),
         )
         self.deep_layer = deep_layer
-        self.layer_norm = nn.LayerNorm(dense_low_channel)
+        self.layer_norm = nn.LayerNorm(dense_low_channel, elementwise_affine=False)
 
     def forward(self, embedding, w_t, w_c, alpha_in, layer_index):
         """
@@ -160,30 +160,26 @@ class EmbeddingOptimizer(nn.Module):
             w_c: [B, C] Normalized clutter weight
             clt_features: [B, C, H, W] for alpha input
         """
-        
         hyper_tgt = self.hypernetworks_mlp[0](w_t)
         hyper_clt = self.hypernetworks_mlp[1](w_c)
-        # w_t = F.normalize(hyper_tgt, dim=1, eps=1e-6)
-        # w_c = F.normalize(hyper_clt, dim=1, eps=1e-6)
-        w_t = self.layer_norm(hyper_tgt)
-        w_c = self.layer_norm(hyper_clt)
-        w_c_ir = w_c - (w_c*w_t).sum(dim=1, keepdim=True)/ (w_t * w_t).sum(dim=1, keepdim=True) * w_t
-        tgt_proj = (w_t[..., None, None] * embedding).sum(dim=1, keepdim=True)
-        clt_proj = (w_c[..., None, None] * embedding).sum(dim=1, keepdim=True)
+        w_t_norm = F.normalize(self.layer_norm(hyper_tgt), p=2, dim=1, eps=1e-6)
+        w_c_norm = F.normalize(self.layer_norm(hyper_clt), p=2, dim=1, eps=1e-6)
+        w_c_ir_norm = F.normalize(w_c_norm - (w_c_norm*w_t_norm).sum(dim=1, keepdim=True) * w_t_norm, p=2, dim=1, eps=1e-6)
+        tgt_proj = (w_t_norm[..., None, None] * embedding).sum(dim=1, keepdim=True)
+        clt_proj = (w_c_ir_norm[..., None, None] * embedding).sum(dim=1, keepdim=True)
         target_mask = self.upsample(tgt_proj)
         clutter_mask = self.upsample(clt_proj)
         alpha = self.alpha_head(alpha_in)
-        # if self.deep_layer:
-        corrected_embedding = embedding - alpha * w_t[..., None, None] * clt_proj
-        # else:
-        #     corrected_embedding = embedding + w_t[..., None, None] * tgt_proj - alpha * w_t[..., None, None] * clt_proj
+
+        corrected_embedding = embedding - alpha * w_t_norm[..., None, None] * clt_proj
 
         return_dict = {
             "target_mask": target_mask,
             "clutter_mask": clutter_mask,
             "corrected_embedding": corrected_embedding,
-            "w_t": w_t,
-            "w_c": w_c,
+            "w_t": w_t_norm,
+            "w_c": w_c_norm,
+            "w_c_ir": w_c_ir_norm,
             "alpha": alpha,
         }
         
@@ -497,7 +493,7 @@ class SamAdaptor(nn.Module):
             for i, (feature_map, skip_conv, up_decoder) in enumerate(zip(dense_features[::-1], self.skip_convs, self.up_decoders)):
                 deep_feat = up_decoder(deep_feat, skip_conv(feature_map))
                 alpha_in = F.interpolate(deep_dict['alpha'], deep_feat.shape[-2:], mode='bilinear', align_corners=False)
-                deep_dict = self.embedding_optimizer_up[i](deep_feat, deep_dict["w_t"], deep_dict["w_c"], alpha_in, layer_index=i+1)
+                deep_dict = self.embedding_optimizer_up[i](deep_feat, deep_dict["w_t"], deep_dict["w_c_ir"], alpha_in, layer_index=i+1)
                 deep_feat = deep_dict["corrected_embedding"]
                 deep_mask = (deep_dict["w_t"][..., None, None] * deep_feat).sum(dim=1, keepdim=True)
                 masks.append(deep_mask)
@@ -543,7 +539,8 @@ class SamAdaptor(nn.Module):
         masks = []
         for mask_conv, feature_map in zip(self.reduction_convs[::-1], deep_feats[::-1]):
             mask_0 = F.interpolate(feature_map, image_size, mode="bilinear", align_corners=False)
-            # mask_0 = mask_conv(mask_0)
+            if not self.use_alpha:
+                mask_0 = mask_conv(mask_0)
             masks.append(mask_0)
 
         return masks
@@ -581,11 +578,11 @@ def make_adaptor(
     window_spec: list[int] = [8, 4, 16],
     block: str = "res",
     embed_dim=96,
-    use_sam_decoder=True,
+    use_sam_decoder=False,
     pe_inch=[24, 48, 96],
     sam_ckpt_path=None,
     num_mask_tokens=2,
-    use_alpha=True,
+    use_alpha=False,
 ):
     """_summary_
 

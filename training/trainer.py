@@ -73,7 +73,7 @@ class Trainer:
         self.model = model  # type: nn.Module
         self.optimizer = optimizer  # type: torch.optim.Optimizer
         self.scheduler = scheduler  # type: Optional[torch.optim.lr_scheduler.LRScheduler]
-        self.loss_fn = loss_fn if loss_fn is not None else nn.BCELoss(reduction="mean")  # type: nn.Module
+        self.loss_fn = loss_fn if loss_fn is not None else nn.BCEWithLogitsLoss(reduction="mean")  # type: nn.Module
         self.device = device  # type: Union[str, torch.device]
         self.save_dir = save_dir  # type: str
         self.metric_wrapper = metric_wrapper  # type: Optional[metricWrapper]
@@ -148,17 +148,20 @@ class Trainer:
             pred_logits, return_dicts = self.model(batch_data)
             pred_loss = 0
             for pred_logit in pred_logits:
-                pred_loss += self.loss_fn(pred_logit.sigmoid(), batch_masks)
+                pred_loss += self.loss_fn(pred_logit, batch_masks)
             if return_dicts is not None:
                 # alpha_loss = AlphaLoss(return_dicts[0], clutter_labels, batch_masks)
                 inter_bce = 0
                 cos_loss = 0
                 for return_dict in return_dicts:
-                    tgt_inter_bce = self.loss_fn(return_dict["target_mask"].sigmoid(), batch_masks)
-                    clt_inter_bce = self.loss_fn(return_dict["clutter_mask"].sigmoid(), clutter_labels)
+                    tgt_inter_bce = self.loss_fn(return_dict["target_mask"], batch_masks)
+                    clt_inter_bce = self.loss_fn(return_dict["clutter_mask"], clutter_labels)
                     inter_bce += tgt_inter_bce + 0.1 * clt_inter_bce
-                    cos_loss += (F.cosine_similarity(return_dict["w_t"], return_dict["w_c"], dim=1).mean())**2
-                loss = self.loss_weights[0]*pred_loss + self.loss_weights[1]*cos_loss + self.loss_weights[2]*inter_bce
+                    cos_loss += (F.cosine_similarity(return_dict["w_t"], return_dict["w_c"], dim=1).pow(2)).mean()
+                if idx > 50:
+                    loss = self.loss_weights[0]*pred_loss + self.loss_weights[1]*cos_loss + self.loss_weights[2]*inter_bce
+                else:
+                    loss = self.loss_weights[0]*pred_loss + self.loss_weights[2]*inter_bce
             else:
                 loss = pred_loss
             self.optimizer.zero_grad()
@@ -168,7 +171,7 @@ class Trainer:
             total_samples += batch_data.size(0)
             if self.rank == 0:
                 pbar.update()
-                if return_dict is not None:
+                if return_dicts is not None:
                     pbar.desc = f"[Training] Epoch {self.epoch:3d} loss={total_loss / total_samples: .6f} pred_loss={pred_loss.item(): .6f} cos_loss={cos_loss.item(): .6f}, inter_bce={inter_bce.item(): .6f}"
                 else:
                     pbar.desc = f"[Training] Epoch {self.epoch:3d} loss={total_loss / total_samples: .6f} pred_loss={pred_loss.item(): .6f}"

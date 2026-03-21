@@ -157,7 +157,7 @@ def main():
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=args.epoch, eta_min=args.eta_min
     )
-    loss_fun = nn.BCELoss(reduction="mean")
+    loss_fun = nn.BCEWithLogitsLoss(reduction="mean")
 
     # Initialize Trainer
     trainer = Trainer(
