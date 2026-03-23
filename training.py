@@ -137,6 +137,7 @@ def main():
         istraining=True,
         base_size=args.image_size,
         crop_size=args.image_size,
+        clutter_mode=args.clutter_mode,
     )
     val_set = ImageFolder(
         args.data_path,
@@ -144,6 +145,7 @@ def main():
         istraining=False,
         base_size=args.image_size,
         crop_size=args.image_size,
+        clutter_mode=args.clutter_mode,
     )
 
     # Load model configuration from YAML file

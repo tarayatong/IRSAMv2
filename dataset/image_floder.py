@@ -85,78 +85,105 @@ def to_float_div_255(x):
     return x.float() / 255.0
 
 
-def directional_sensitive_edge_detection(im_np, mask_np, threshold=33.0):
+def directional_sensitive_edge_detection(im_np, mask_np, threshold=33.0, mode="combined"):
     """
-    Hybrid spot detection using Laplacian and Top-Hat transform.
-    Thresholds are adaptively determined by the response intensity at target locations.
-    
+    Hybrid spot detection / clutter label generation.
+    Supports two modes:
+        - "canny": classic Canny with adaptive thresholds + dilated gt exclusion。
+        - "combined": Laplacian + TopHat hybrid detection (original behavior).
+
     Args:
-        im_np: [H, W, C] or [H, W] numpy array, uint8
+        im_np: [H, W, C] or [H, W] numpy array, uint8/float32
         mask_np: [H, W] numpy array, uint8 (0 or 255/1), Ground Truth Mask
         threshold: Fallback threshold if no target exists
+        mode: "canny" or "combined"
+
     Returns:
         edge_mask: [H, W] numpy array, uint8 (0 or 255)
     """
-    # Ensure input is grayscale and float32
+    # Ensure grayscale
     if len(im_np.shape) == 3:
         img_gray = cv2.cvtColor(im_np, cv2.COLOR_RGB2GRAY)
     else:
         img_gray = im_np
-    
-    # Pre-calculate target locations for adaptive thresholding
-    # Dilate mask slightly to capture target neighborhood if mask is too small
-    if mask_np.sum() > 0:
-        kernel_dilate = np.ones((3, 3), np.uint8)
-        mask_dilated = cv2.dilate((mask_np > 0).astype(np.uint8), kernel_dilate, iterations=1)
-        target_indices = (mask_dilated > 0)
-    else:
-        target_indices = None
 
-    # --- Branch 1: Laplacian (Focus on sharp gradients/spots) ---
-    img_tensor = torch.from_numpy(img_gray).float().unsqueeze(0).unsqueeze(0) # [1, 1, H, W]
-    k_laplace = torch.tensor([[-1, -1, -1],
-                              [-1,  8, -1],
-                              [-1, -1, -1]], dtype=torch.float32).view(1, 1, 3, 3)
-    response = torch.nn.functional.conv2d(img_tensor, k_laplace, padding=1)
-    response_abs = torch.abs(response).squeeze().numpy()
-    
-    # Adaptive thresholding for Laplacian
-    if target_indices is not None:
-        # Calculate mean response in target area
-        target_response = response_abs[target_indices]
-        lap_threshold = target_response.mean() * 0.5 # Relax threshold to capture slightly weaker clutter
-    else:
-        lap_threshold = im_np.mean() * 0.5 # Approximate scaling for Laplacian if no target
-        
-    laplace_mask = (response_abs > lap_threshold)
+    # Cast for Canny (0-255 uint8)
+    img_gray_u8 = img_gray
+    if img_gray_u8.dtype != np.uint8:
+        img_gray_u8 = np.clip(img_gray_u8, 0, 255).astype(np.uint8)
 
-    # --- Branch 2: Top-Hat Transform (Focus on local brightness peaks) ---
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-    tophat = cv2.morphologyEx(img_gray, cv2.MORPH_TOPHAT, kernel)
-    
-    # Adaptive thresholding for Top-Hat
-    if target_indices is not None:
-        target_tophat = tophat[target_indices]
-        tophat_threshold = target_tophat.mean()* 0.5 # Relax threshold
-    else:
-        tophat_threshold = threshold
-        
-    tophat_mask = (tophat > tophat_threshold)
+    if mode == "canny":
+        # Adapted from the commented logic in request
+        # imgt = im_unnorm * (gt_np > 0)[:, :, None]
+        # t1 = im_unnorm.mean()
+        # mean_target = imgt[imgt > 0].mean() if imgt.sum() > 0 else 0
+        # t2 = abs(mean_target - t1)
+        # edge = cv2.Canny(im_unnorm, int(t1), int(t2))
+        # blurred = cv2.GaussianBlur(edge, (3, 3), 0)
+        # ...
 
-    # --- Combine & Smooth ---
-    # Union of both methods
-    combined_mask = np.logical_or(laplace_mask, tophat_mask).astype(np.uint8) * 255
-    
-    # Optional: Apply slight smoothing/dilation to connect fragmented spots
-    # Using median blur to remove salt-and-pepper noise while keeping edges
-    combined_mask = cv2.medianBlur(combined_mask, 3)
-    
-    # Debug Visualization
-    # Image.fromarray(laplace_mask.astype(np.uint8)*255).save('results/vis_res/clutter_label/laplace_mask.png')
-    # Image.fromarray(tophat_mask.astype(np.uint8)*255).save('results/vis_res/clutter_label/tophat_mask.png')
-    # Image.fromarray(combined_mask).save('results/vis_res/clutter_label/combined_mask.png')
-    
-    return combined_mask
+        if len(im_np.shape) == 3:
+            imgt = im_np * (mask_np > 0)[:, :, None]
+        else:
+            imgt = im_np * (mask_np > 0)
+
+        t1 = float(img_gray_u8.mean())
+        if imgt.size > 0 and np.count_nonzero(imgt) > 0:
+            mean_target = float(imgt[imgt > 0].mean())
+        else:
+            mean_target = 0.0
+        t2 = abs(mean_target - t1)
+
+        low_thr = max(1, min(int(t1), int(t2)))
+        high_thr = max(low_thr + 1, max(int(t1), int(t2)))
+
+        edge = cv2.Canny(img_gray_u8, low_thr, high_thr)
+        blurred = cv2.GaussianBlur(edge, (3, 3), 0)
+
+        kernel = np.ones((7, 7), np.uint8)
+        dilated_gt = cv2.dilate((mask_np > 0).astype(np.uint8), kernel, iterations=1)
+        clutter_label_np = ((blurred) > 0).astype(np.uint8) * (1 - dilated_gt)
+        return (clutter_label_np.astype(np.uint8) * 255)
+
+    elif mode == "combined":
+        if mask_np.sum() > 0:
+            kernel_dilate = np.ones((3, 3), np.uint8)
+            mask_dilated = cv2.dilate((mask_np > 0).astype(np.uint8), kernel_dilate, iterations=1)
+            target_indices = (mask_dilated > 0)
+        else:
+            target_indices = None
+
+        img_tensor = torch.from_numpy(img_gray).float().unsqueeze(0).unsqueeze(0)
+        k_laplace = torch.tensor([[-1, -1, -1],
+                                  [-1,  8, -1],
+                                  [-1, -1, -1]], dtype=torch.float32).view(1, 1, 3, 3)
+        response = torch.nn.functional.conv2d(img_tensor, k_laplace, padding=1)
+        response_abs = torch.abs(response).squeeze().numpy()
+
+        if target_indices is not None:
+            target_response = response_abs[target_indices]
+            lap_threshold = target_response.mean() * 0.5
+        else:
+            lap_threshold = img_gray.mean() * 0.5
+
+        laplace_mask = (response_abs > lap_threshold)
+
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        tophat = cv2.morphologyEx(img_gray, cv2.MORPH_TOPHAT, kernel)
+
+        if target_indices is not None:
+            target_tophat = tophat[target_indices]
+            tophat_threshold = target_tophat.mean() * 0.5
+        else:
+            tophat_threshold = threshold
+
+        tophat_mask = (tophat > tophat_threshold)
+        combined_mask = np.logical_or(laplace_mask, tophat_mask).astype(np.uint8) * 255
+        combined_mask = cv2.medianBlur(combined_mask, 3)
+        return combined_mask
+
+    else:
+        raise ValueError(f"directional_sensitive_edge_detection mode must be 'canny' or 'combined', got {mode}")
 
 
 # Modify from https://github.com/xdFai/SCTransNet/blob/main/dataset.py and https://github.com/YeRen123455/Infrared-Small-Target-Detection
@@ -169,9 +196,11 @@ class ImageFolder(Dataset):
         base_size=256,
         crop_size=256,
         copy_paste=True,
+        clutter_mode="combined",
     ):
         self.path = path
         self.copy_paste = copy_paste
+        self.clutter_mode = clutter_mode
         self.T_masks = os.path.join(path, data_set, "masks")
         self.T_images = os.path.join(path, data_set, "images")
         self.base_size = base_size
@@ -398,7 +427,7 @@ class ImageFolder(Dataset):
             t1 = abs(mean_target - target_bg.mean())
             t2 = abs(mean_target - im_np.mean())
             # edge = cv2.Canny(im_np, int(t1), int(t2)) # Canny expects int thresholds usually
-            edge = directional_sensitive_edge_detection(im_np, gt_np, threshold=min(t1, t2))
+            edge = directional_sensitive_edge_detection(im_np, gt_np, threshold=min(t1, t2), mode=self.clutter_mode)
             blurred = cv2.GaussianBlur(edge, (3, 3), 0)
             clutter_label_np = ((blurred) > 0).astype(np.uint8) * 255 
             
