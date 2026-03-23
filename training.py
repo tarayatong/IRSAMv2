@@ -80,12 +80,12 @@ def main():
         type=str,
         help="Path to checkpoint to resume training from",
     )
-    parser.add_argument(
-        "--loss_weights",
-        default=[1.0, 0.5, 0.1],
-        type=list,
-        help="Weights for loss functions",
-    )
+    # parser.add_argument(
+    #     "--loss_weights",
+    #     default=[1.0, 0.5, 0.1],
+    #     type=list,
+    #     help="Weights for loss functions",
+    # )
     parser.add_argument(
         "--log_dir",
         default="./logs",
