@@ -80,12 +80,18 @@ def main():
         type=str,
         help="Path to checkpoint to resume training from",
     )
-    # parser.add_argument(
-    #     "--loss_weights",
-    #     default=[1.0, 0.5, 0.1],
-    #     type=list,
-    #     help="Weights for loss functions",
-    # )
+    parser.add_argument(
+        "--loss_weights",
+        default=[1.0, 0.5, 0.1],
+        type=list,
+        help="Weights for loss functions",
+    )
+    parser.add_argument(
+        "--clutter_mode",
+        default="canny",
+        type=str,
+        help="Clutter mode for edge detection (e.g., canny, combined)",
+    )
     parser.add_argument(
         "--log_dir",
         default="./logs",
