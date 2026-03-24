@@ -509,7 +509,7 @@ class ImageFolder(Dataset):
                 t1 = abs(mean_target - target_bg.mean())
                 t2 = abs(mean_target - im_np.mean())
                 # edge = cv2.Canny(im_np, int(t1), int(t2)) # Canny expects int thresholds usually
-                edge = directional_sensitive_edge_detection(im_np, gt_np, threshold=min(t1, t2))
+                edge = directional_sensitive_edge_detection(im_np, gt_np, threshold=min(t1, t2), mode=self.clutter_mode)
                 blurred = cv2.GaussianBlur(edge, (3, 3), 0)
                 clutter_label_np = ((blurred) > 0).astype(np.uint8) * 255
 
@@ -565,13 +565,19 @@ class ImageFolder(Dataset):
                 t1 = abs(mean_target - target_bg.mean())
                 t2 = abs(mean_target - im_np.mean())
                 # edge = cv2.Canny(im_np, int(t1), int(t2)) # Canny expects int thresholds usually
-                edge = directional_sensitive_edge_detection(im_np, gt_np, threshold=min(t1, t2))
+                edge = directional_sensitive_edge_detection(im_np, gt_np, threshold=min(t1, t2), mode=self.clutter_mode)
                 blurred = cv2.GaussianBlur(edge, (3, 3), 0)
                 clutter_label_np = ((blurred) > 0).astype(np.uint8) * 255
 
                 # Mask out Clutter using dilated GT
                 clutter_label_np = clutter_label_np * (1 - dilated_gt)
                 clutter_label = Image.fromarray(clutter_label_np.astype(np.uint8))
+
+            # unify clutter_label output for NUDT-SIRST as tensor [1, H, W]
+            if not torch.is_tensor(clutter_label):
+                if isinstance(clutter_label, Image.Image):
+                    clutter_label = np.array(clutter_label, dtype=np.float32)
+                clutter_label = torch.from_numpy((clutter_label / 255.0).astype(np.float32)).unsqueeze(0)
 
             mask = (mask > 0).to(torch.float32)
             
@@ -621,7 +627,7 @@ class ImageFolder(Dataset):
             t1 = abs(mean_target - target_bg.mean())
             t2 = abs(mean_target - im_np.mean())
             # edge = cv2.Canny(im_np, int(t1), int(t2)) # Canny expects int thresholds usually
-            edge = directional_sensitive_edge_detection(im_np, gt_np, threshold=min(t1, t2))
+            edge = directional_sensitive_edge_detection(im_np, gt_np, threshold=min(t1, t2), mode=self.clutter_mode)
             blurred = cv2.GaussianBlur(edge, (3, 3), 0)
             clutter_label_np = ((blurred) > 0).astype(np.uint8) * 255
 
