@@ -478,7 +478,7 @@ class ImageFolder(Dataset):
                 # Normalized function: (img - mean) / std. Reverse: img * std + mean.
                 # NUDT-SIRST: mean=107.809, std=33.022
                 im_unnorm = im_np * 33.02274703979492 + 107.80905151367188
-                im_unnorm = np.clip(im_unnorm, 0, 255).astype(np.uint8)
+                im_np = np.clip(im_unnorm, 0, 255).astype(np.uint8)
                 
                 gt_np = (mask.numpy().squeeze() * 255).astype(np.uint8)
                 
@@ -535,7 +535,7 @@ class ImageFolder(Dataset):
                 # Recalculate clutter on padded image
                 im_np = (img.numpy().transpose(1, 2, 0)).astype(np.float32)
                 im_unnorm = im_np * 33.02274703979492 + 107.80905151367188
-                im_unnorm = np.clip(im_unnorm, 0, 255).astype(np.uint8)
+                im_np = np.clip(im_unnorm, 0, 255).astype(np.uint8)
                 
                 gt_np = (mask.numpy().squeeze() * 255).astype(np.uint8)
                 
