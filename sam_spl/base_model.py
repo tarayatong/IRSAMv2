@@ -133,7 +133,7 @@ def build_dynamic_conv(skip_channel: int, n: int) -> nn.Sequential:
 
 
 class EmbeddingOptimizer(nn.Module):
-    def __init__(self, decoder_dim, dense_low_channel, alpha_chn,num_mask_tokens=2, upsample_scale=2, deep_layer=False):
+    def __init__(self, decoder_dim, dense_low_channel, alpha_chn, num_mask_tokens=2, upsample_scale=2, deep_layer=False):
         super().__init__()
         # Upsample modules (list of upsamplers)
         self.upsample = nn.Upsample(scale_factor=upsample_scale, mode='bilinear', align_corners=False)
@@ -170,8 +170,12 @@ class EmbeddingOptimizer(nn.Module):
         target_mask = self.upsample(tgt_proj)
         clutter_mask = self.upsample(clt_proj)
         alpha = self.alpha_head(alpha_in)
+        pc_wt = w_t_norm[..., None, None] * clt_proj
+        pc_wc = w_c_ir_norm[..., None, None] * clt_proj
+        pt_wt = w_t_norm[..., None, None] * tgt_proj
+        pt_wc = w_c_ir_norm[..., None, None] * tgt_proj
 
-        corrected_embedding = embedding - alpha * w_t_norm[..., None, None] * clt_proj
+        corrected_embedding = embedding + alpha * (pt_wt-pt_wc) + (1-alpha) * (pc_wc-pc_wt) 
 
         return_dict = {
             "target_mask": target_mask,
