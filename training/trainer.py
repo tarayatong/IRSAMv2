@@ -157,7 +157,10 @@ class Trainer:
                     tgt_inter_bce = self.loss_fn(return_dict["target_mask"], batch_masks)
                     clt_inter_bce = self.loss_fn(return_dict["clutter_mask"], clutter_labels)
                     inter_bce += tgt_inter_bce + 0.1 * clt_inter_bce
-                    cos_loss += (F.cosine_similarity(return_dict["w_t"], return_dict["w_c"], dim=1).pow(2)).mean()
+                    cos_sim = F.cosine_similarity(return_dict["w_t"], return_dict["w_c"], dim=1)
+                    margin = -1.0
+                    cos_loss+=torch.clamp(cos_sim - margin, min=0).mean()
+                    # cos_loss += (F.cosine_similarity(return_dict["w_t"], return_dict["w_c"], dim=1)+1.0).mean()
                 if idx > 50:
                     loss = self.loss_weights[0]*pred_loss + self.loss_weights[1]*cos_loss + self.loss_weights[2]*inter_bce
                 else:

@@ -166,7 +166,7 @@ class EmbeddingOptimizer(nn.Module):
         w_c_norm = F.normalize(self.layer_norm(hyper_clt), p=2, dim=1, eps=1e-6)
         w_c_ir_norm = F.normalize(w_c_norm - (w_c_norm*w_t_norm).sum(dim=1, keepdim=True) * w_t_norm, p=2, dim=1, eps=1e-6)
         tgt_proj = (w_t_norm[..., None, None] * embedding).sum(dim=1, keepdim=True)
-        clt_proj = (w_c_ir_norm[..., None, None] * embedding).sum(dim=1, keepdim=True)
+        clt_proj = (w_c_norm[..., None, None] * embedding).sum(dim=1, keepdim=True)
         target_mask = self.upsample(tgt_proj)
         clutter_mask = self.upsample(clt_proj)
         alpha = self.alpha_head(alpha_in)
@@ -175,7 +175,7 @@ class EmbeddingOptimizer(nn.Module):
         pt_wt = w_t_norm[..., None, None] * tgt_proj
         pt_wc = w_c_ir_norm[..., None, None] * tgt_proj
 
-        corrected_embedding = embedding + alpha * (pt_wt-pt_wc) + (1-alpha) * (pc_wc-pc_wt) 
+        corrected_embedding = embedding - alpha * (pt_wc) - (1-alpha) * (pc_wt) 
 
         return_dict = {
             "target_mask": target_mask,
