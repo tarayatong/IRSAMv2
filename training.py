@@ -11,6 +11,7 @@ from training import Trainer, seed_everything, metricWrapper
 from loguru import logger
 import datetime
 import yaml
+from sam_spl.constractive_loss import compute_target_centric_contrastive_loss
 
 
 def main():
@@ -31,7 +32,7 @@ def main():
     parser.add_argument(
         "--epoch", default=300, type=int, help="Number of training epochs"
     )
-    parser.add_argument("--lr", default=0.01, type=float, help="Initial learning rate")
+    parser.add_argument("--lr", default=0.001, type=float, help="Initial learning rate")
     parser.add_argument(
         "--save_dir",
         default="./checkpoints/IRSTD-1k",
@@ -82,15 +83,21 @@ def main():
     )
     parser.add_argument(
         "--loss_weights",
-        default=[1.0, 0.5, 0.1],
+        default=[1.0, 0.5, 0.1, 0.2],
         type=list,
-        help="Weights for loss functions",
+        help="Weights for loss functions, [1.0, 0.5, 0.1] for pred_bce, cos_loss, inter_bce; [1.0, 0.5, 0.1, 0.2] for pred_bce, query_cos, target_inter_bce, contrastive_loss",
     )
     parser.add_argument(
         "--clutter_mode",
-        default="canny",
+        default="combined",
         type=str,
         help="Clutter mode for edge detection (e.g., canny, combined)",
+    )
+    parser.add_argument(
+        "--constractive_loss",
+        default='target_centric',
+        type=str,
+        help="Contrastive loss function, target_centric or None",
     )
     parser.add_argument(
         "--log_dir",
@@ -161,7 +168,7 @@ def main():
     model._freeze_encoder()
 
     # Set up optimizer, scheduler, loss function
-    optimizer = Adan(model.parameters(), lr=args.lr, weight_decay=1e-4)
+    optimizer = Adan(model.parameters(), lr=args.lr, weight_decay=1e-6)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=args.epoch, eta_min=args.eta_min
     )
@@ -181,6 +188,7 @@ def main():
         distributed=distributed,
         save_dir=args.save_dir,
         loss_weights=args.loss_weights,
+        constractive_loss=compute_target_centric_contrastive_loss if args.constractive_loss == "target_centric" else None,
         metric_wrapper = metricWrapper(),
     )
     

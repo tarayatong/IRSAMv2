@@ -165,17 +165,18 @@ class EmbeddingOptimizer(nn.Module):
         w_t_norm = F.normalize(self.layer_norm(hyper_tgt), p=2, dim=1, eps=1e-6)
         w_c_norm = F.normalize(self.layer_norm(hyper_clt), p=2, dim=1, eps=1e-6)
         w_c_ir_norm = F.normalize(w_c_norm - (w_c_norm*w_t_norm).sum(dim=1, keepdim=True) * w_t_norm, p=2, dim=1, eps=1e-6)
-        tgt_proj = (w_t_norm[..., None, None] * embedding).sum(dim=1, keepdim=True)
-        clt_proj = (w_c_norm[..., None, None] * embedding).sum(dim=1, keepdim=True)
-        target_mask = self.upsample(tgt_proj)
-        clutter_mask = self.upsample(clt_proj)
+        emb_norm_for_proj = F.normalize(embedding, p=2, dim=1, eps=1e-6)
+        tgt_cos = (w_t_norm[..., None, None] * emb_norm_for_proj).sum(dim=1, keepdim=True)
+        clt_cos = (w_c_norm[..., None, None] * emb_norm_for_proj).sum(dim=1, keepdim=True)
+        target_mask = self.upsample(tgt_cos)
+        clutter_mask = self.upsample(clt_cos)
         alpha = self.alpha_head(alpha_in)
-        pc_wt = w_t_norm[..., None, None] * clt_proj
-        pc_wc = w_c_ir_norm[..., None, None] * clt_proj
-        pt_wt = w_t_norm[..., None, None] * tgt_proj
-        pt_wc = w_c_ir_norm[..., None, None] * tgt_proj
+        pc_wt = w_t_norm[..., None, None] * clt_cos
+        pc_wc = w_c_ir_norm[..., None, None] * clt_cos
+        pt_wt = w_t_norm[..., None, None] * tgt_cos
+        pt_wc = w_c_ir_norm[..., None, None] * tgt_cos
 
-        corrected_embedding = embedding - alpha * (pt_wc) - (1-alpha) * (pc_wt) 
+        corrected_embedding = embedding + alpha * (pt_wt - pt_wc) + (1-alpha) * (pc_wc - pc_wt) 
 
         return_dict = {
             "target_mask": target_mask,
@@ -233,7 +234,7 @@ class SamAdaptor(nn.Module):
             backbone_channel_list=backbone_channel_list,
             stages=stages,
         )
-        
+        self.tau = 15.0
         self.skip_channel_gen = dense_low_channels
         self.mask_channel_gen = [ch // 2 for ch in dense_low_channels]
         if self.use_sam_decoder:
@@ -499,7 +500,7 @@ class SamAdaptor(nn.Module):
                 alpha_in = F.interpolate(deep_dict['alpha'], deep_feat.shape[-2:], mode='bilinear', align_corners=False)
                 deep_dict = self.embedding_optimizer_up[i](deep_feat, deep_dict["w_t"], deep_dict["w_c_ir"], alpha_in, layer_index=i+1)
                 deep_feat = deep_dict["corrected_embedding"]
-                deep_mask = (deep_dict["w_t"][..., None, None] * deep_feat).sum(dim=1, keepdim=True)
+                deep_mask = (deep_dict["w_t"][..., None, None] * F.normalize(deep_feat, p=2, dim=1)).sum(dim=1, keepdim=True)*self.tau
                 masks.append(deep_mask)
                 return_dicts.append(deep_dict)
         else:

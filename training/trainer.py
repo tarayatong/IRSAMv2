@@ -22,11 +22,9 @@ import torch.distributed as dist
 from torch.utils.data import DataLoader, DistributedSampler
 from loguru import logger
 import enlighten
-from sam_spl.alpha_loss import AlphaLoss
 
 # Import metricWrapper for type hints
 from .metrics_config import metricWrapper
-from sam_spl.alpha_loss import AlphaLoss
 
 class Trainer:
     """
@@ -68,12 +66,14 @@ class Trainer:
         distributed: bool = False,
         save_dir: str = "./checkpoints",
         loss_weights: list[float]=[1., 1., 1.],
+        constractive_loss: Optional[str] = None,
         metric_wrapper: Optional[metricWrapper] = metricWrapper(),
     ):
         self.model = model  # type: nn.Module
         self.optimizer = optimizer  # type: torch.optim.Optimizer
         self.scheduler = scheduler  # type: Optional[torch.optim.lr_scheduler.LRScheduler]
         self.loss_fn = loss_fn if loss_fn is not None else nn.BCEWithLogitsLoss(reduction="mean")  # type: nn.Module
+        self.constractive_loss = constractive_loss  # type: Optional[str]
         self.device = device  # type: Union[str, torch.device]
         self.save_dir = save_dir  # type: str
         self.metric_wrapper = metric_wrapper  # type: Optional[metricWrapper]
@@ -150,21 +150,46 @@ class Trainer:
             for pred_logit in pred_logits:
                 pred_loss += self.loss_fn(pred_logit, batch_masks)
             if return_dicts is not None:
-                # alpha_loss = AlphaLoss(return_dicts[0], clutter_labels, batch_masks)
-                inter_bce = 0
-                cos_loss = 0
-                for return_dict in return_dicts:
-                    tgt_inter_bce = self.loss_fn(return_dict["target_mask"], batch_masks)
-                    clt_inter_bce = self.loss_fn(return_dict["clutter_mask"], clutter_labels)
-                    inter_bce += tgt_inter_bce + 0.1 * clt_inter_bce
-                    cos_sim = F.cosine_similarity(return_dict["w_t"], return_dict["w_c"], dim=1)
-                    margin = -1.0
-                    cos_loss+=torch.clamp(cos_sim - margin, min=0).mean()
-                    # cos_loss += (F.cosine_similarity(return_dict["w_t"], return_dict["w_c"], dim=1)+1.0).mean()
-                if idx > 50:
-                    loss = self.loss_weights[0]*pred_loss + self.loss_weights[1]*cos_loss + self.loss_weights[2]*inter_bce
+                if self.constractive_loss is None:
+                    inter_bce = 0
+                    cos_loss = 0
+                    for return_dict in return_dicts:
+                        tgt_inter_bce = self.loss_fn(return_dict["target_mask"], batch_masks)
+                        clt_inter_bce = self.loss_fn(return_dict["clutter_mask"], clutter_labels)
+                        inter_bce += tgt_inter_bce + 0.1 * clt_inter_bce
+                        cos_sim = F.cosine_similarity(return_dict["w_t"], return_dict["w_c"], dim=1)
+                        margin = -1.0
+                        cos_loss+=torch.clamp(cos_sim - margin, min=0).mean()
+                        # cos_loss += (F.cosine_similarity(return_dict["w_t"], return_dict["w_c"], dim=1)+1.0).mean()
+                    if idx > 50:
+                        loss = self.loss_weights[0]*pred_loss + self.loss_weights[1]*cos_loss + self.loss_weights[2]*inter_bce
+                    else:
+                        loss = self.loss_weights[0]*pred_loss + self.loss_weights[2]*inter_bce
                 else:
-                    loss = self.loss_weights[0]*pred_loss + self.loss_weights[2]*inter_bce
+                    inter_bce = 0
+                    query_neg_loss = 0
+                    feat_contrast_loss = 0
+                    for return_dict in return_dicts:
+                        inter_bce += self.loss_fn(return_dict["target_mask"], batch_masks)
+                        cos_sim_query = F.cosine_similarity(return_dict["w_t"], return_dict["w_c"], dim=1)
+                        query_neg_loss += (cos_sim_query + 1.0).mean()
+                        loss_pull, loss_push = self.constractive_loss(
+                            emb_prime=return_dict["corrected_embedding"],
+                            w_t=return_dict["w_t"],
+                            gt_mask=batch_masks,
+                            margin_push=0.5 
+                        )
+                        feat_contrast_loss += loss_pull + 2.0 * loss_push # 适当加大 push 的权重来抑制虚警
+                    if idx < 0:
+                        loss = self.loss_weights[0]*pred_loss + self.loss_weights[2]*inter_bce
+                    elif idx < 0:
+                        loss = (self.loss_weights[0] * pred_loss + 
+                                self.loss_weights[2] * inter_bce + 
+                                self.loss_weights[1] * query_neg_loss)
+                    else:        
+                        loss = (self.loss_weights[0] * pred_loss + 
+                                self.loss_weights[2] * inter_bce + 
+                                self.loss_weights[1] * query_neg_loss + self.loss_weights[3] * feat_contrast_loss)
             else:
                 loss = pred_loss
             self.optimizer.zero_grad()
@@ -175,7 +200,10 @@ class Trainer:
             if self.rank == 0:
                 pbar.update()
                 if return_dicts is not None:
-                    pbar.desc = f"[Training] Epoch {self.epoch:3d} loss={total_loss / total_samples: .6f} pred_loss={pred_loss.item(): .6f} cos_loss={cos_loss.item(): .6f}, inter_bce={inter_bce.item(): .6f}"
+                    if self.constractive_loss is None:
+                        pbar.desc = f"[Training] Epoch {self.epoch:3d} loss={total_loss / total_samples: .6f} pred_loss={pred_loss.item(): .6f} cos_loss={cos_loss.item(): .6f}, inter_bce={inter_bce.item(): .6f}"
+                    else:
+                        pbar.desc = f"[Training] Epoch {self.epoch:3d} loss={total_loss / total_samples: .6f} pred_loss={pred_loss.item(): .6f}" + f" query_neg_loss={query_neg_loss.item(): .6f} tgt_inter_bce={inter_bce.item(): .6f} feat_contrast_loss={feat_contrast_loss.item(): .6f}"
                 else:
                     pbar.desc = f"[Training] Epoch {self.epoch:3d} loss={total_loss / total_samples: .6f} pred_loss={pred_loss.item(): .6f}"
         if self.rank == 0:
@@ -218,16 +246,37 @@ class Trainer:
             clutter_labels = clutter_labels.to(self.device).float().clamp(0, 1)
             masks, return_dicts = self.model(batch_data)
             pred_logit = masks[0]
+            pred_loss = self.loss_fn(pred_logit.sigmoid(), batch_masks)
             if return_dicts is not None:
-                # alpha_loss = AlphaLoss(return_dicts[0], clutter_labels, batch_masks)
-                inter_bce = 0
-                cos_loss = 0
-                for return_dict in return_dicts:
-                    tgt_inter_bce = self.loss_fn(return_dict["target_mask"].sigmoid(), batch_masks)
-                    clt_inter_bce = self.loss_fn(return_dict["clutter_mask"].sigmoid(), clutter_labels)
-                    inter_bce += tgt_inter_bce + 0.1 * clt_inter_bce
-                    cos_loss += F.cosine_similarity(return_dict["w_t"], return_dict["w_c"], dim=1).mean()
-                loss = self.loss_weights[0]*self.loss_fn(pred_logit.sigmoid(), batch_masks) + self.loss_weights[1]*cos_loss + self.loss_weights[2]*inter_bce
+                if self.constractive_loss is None:
+                    inter_bce = 0
+                    cos_loss = 0
+                    for return_dict in return_dicts:
+                        tgt_inter_bce = self.loss_fn(return_dict["target_mask"].sigmoid(), batch_masks)
+                        clt_inter_bce = self.loss_fn(return_dict["clutter_mask"].sigmoid(), clutter_labels)
+                        inter_bce += tgt_inter_bce + 0.1 * clt_inter_bce
+                        cos_loss += (F.cosine_similarity(return_dict["w_t"], return_dict["w_c"], dim=1)+1.0).mean()
+                    loss = self.loss_weights[0]*pred_loss + self.loss_weights[1]*cos_loss + self.loss_weights[2]*inter_bce
+                else:
+                    inter_bce = 0
+                    query_neg_loss = 0
+                    feat_contrast_loss = 0
+                    for return_dict in return_dicts:
+                        inter_bce += self.loss_fn(return_dict["target_mask"], batch_masks)
+                        cos_sim_query = F.cosine_similarity(return_dict["w_t"], return_dict["w_c"], dim=1)
+                        query_neg_loss += (cos_sim_query + 1.0).mean()
+                        loss_pull, loss_push = self.constractive_loss(
+                            emb_prime=return_dict["corrected_embedding"],
+                            w_t=return_dict["w_t"],
+                            gt_mask=batch_masks,
+                            margin_push=0.1 
+                        )
+                        feat_contrast_loss += loss_pull + 2.0 * loss_push # 适当加大 push 的权重来抑制虚警
+                    # 加上 query 负相关和特征对比损失
+                    loss = (self.loss_weights[0] * pred_loss + 
+                            self.loss_weights[1] * query_neg_loss + 
+                            self.loss_weights[2] * inter_bce + 
+                            self.loss_weights[3] * feat_contrast_loss) # 给对比损失加个新权重
             else:
                 loss = self.loss_fn(pred_logit.sigmoid(), batch_masks)
             total_loss += loss.item() * batch_data.size(0)
