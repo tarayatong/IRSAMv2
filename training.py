@@ -11,7 +11,7 @@ from training import Trainer, seed_everything, metricWrapper
 from loguru import logger
 import datetime
 import yaml
-from sam_spl.constractive_loss import compute_target_centric_contrastive_loss
+from sam_spl.constractive_loss import compute_relative_contrastive_loss, compute_target_centric_contrastive_loss, compute_manifold_contrastive_loss
 
 
 def main():
@@ -32,7 +32,7 @@ def main():
     parser.add_argument(
         "--epoch", default=300, type=int, help="Number of training epochs"
     )
-    parser.add_argument("--lr", default=0.001, type=float, help="Initial learning rate")
+    parser.add_argument("--lr", default=0.01, type=float, help="Initial learning rate")
     parser.add_argument(
         "--save_dir",
         default="./checkpoints/IRSTD-1k",
@@ -83,9 +83,10 @@ def main():
     )
     parser.add_argument(
         "--loss_weights",
-        default=[1.0, 0.5, 0.1, 0.2],
+        default=[1.0, 0.5, 0.1, 0.1],
         type=list,
-        help="Weights for loss functions, [1.0, 0.5, 0.1] for pred_bce, cos_loss, inter_bce; [1.0, 0.5, 0.1, 0.2] for pred_bce, query_cos, target_inter_bce, contrastive_loss",
+        help="Weights for loss functions, [1.0, 0.5, 0.1] for pred_bce, cos_loss, inter_bce; "
+        "[1.0, 0.5, 0.1, 0.2] for pred_bce, query_cos, target_inter_bce, contrastive_loss",
     )
     parser.add_argument(
         "--clutter_mode",
@@ -95,7 +96,7 @@ def main():
     )
     parser.add_argument(
         "--constractive_loss",
-        default='target_centric',
+        default='manifold',
         type=str,
         help="Contrastive loss function, target_centric or None",
     )
@@ -173,6 +174,12 @@ def main():
         optimizer, T_max=args.epoch, eta_min=args.eta_min
     )
     loss_fun = nn.BCEWithLogitsLoss(reduction="mean")
+    if args.constractive_loss == "target_centric":  
+        constractive_loss = compute_target_centric_contrastive_loss 
+    elif args.constractive_loss == "relative":
+        constractive_loss = compute_relative_contrastive_loss
+    elif args.constractive_loss == "manifold":
+        constractive_loss = compute_manifold_contrastive_loss
 
     # Initialize Trainer
     trainer = Trainer(
@@ -188,7 +195,7 @@ def main():
         distributed=distributed,
         save_dir=args.save_dir,
         loss_weights=args.loss_weights,
-        constractive_loss=compute_target_centric_contrastive_loss if args.constractive_loss == "target_centric" else None,
+        constractive_loss=constractive_loss,
         metric_wrapper = metricWrapper(),
     )
     

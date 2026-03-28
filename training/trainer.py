@@ -118,6 +118,7 @@ class Trainer:
                 output_device=self.rank,
                 find_unused_parameters=True,
             )
+        self.tau = 0.1
 
     def train_one_epoch(self) -> float:
         """
@@ -170,16 +171,16 @@ class Trainer:
                     query_neg_loss = 0
                     feat_contrast_loss = 0
                     for return_dict in return_dicts:
-                        inter_bce += self.loss_fn(return_dict["target_mask"], batch_masks)
+                        tgt_bce_loss = self.loss_fn(return_dict["target_mask"], batch_masks)
+                        clt_bce_loss = self.loss_fn(return_dict["clutter_mask"], clutter_labels)
+                        inter_bce += tgt_bce_loss + 0.1 * clt_bce_loss
                         cos_sim_query = F.cosine_similarity(return_dict["w_t"], return_dict["w_c"], dim=1)
-                        query_neg_loss += (cos_sim_query + 1.0).mean()
-                        loss_pull, loss_push = self.constractive_loss(
+                        query_neg_loss += (cos_sim_query**2).mean()
+                        feat_contrast_loss = self.constractive_loss(
                             emb_prime=return_dict["corrected_embedding"],
-                            w_t=return_dict["w_t"],
                             gt_mask=batch_masks,
-                            margin_push=0.5 
+                            temperature=0.1
                         )
-                        feat_contrast_loss += loss_pull + 2.0 * loss_push # 适当加大 push 的权重来抑制虚警
                     if idx < 0:
                         loss = self.loss_weights[0]*pred_loss + self.loss_weights[2]*inter_bce
                     elif idx < 0:
@@ -265,13 +266,11 @@ class Trainer:
                         inter_bce += self.loss_fn(return_dict["target_mask"], batch_masks)
                         cos_sim_query = F.cosine_similarity(return_dict["w_t"], return_dict["w_c"], dim=1)
                         query_neg_loss += (cos_sim_query + 1.0).mean()
-                        loss_pull, loss_push = self.constractive_loss(
+                        feat_contrast_loss = self.constractive_loss(
                             emb_prime=return_dict["corrected_embedding"],
-                            w_t=return_dict["w_t"],
                             gt_mask=batch_masks,
-                            margin_push=0.1 
+                            temperature=0.1
                         )
-                        feat_contrast_loss += loss_pull + 2.0 * loss_push # 适当加大 push 的权重来抑制虚警
                     # 加上 query 负相关和特征对比损失
                     loss = (self.loss_weights[0] * pred_loss + 
                             self.loss_weights[1] * query_neg_loss + 
