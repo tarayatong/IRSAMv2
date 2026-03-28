@@ -176,7 +176,7 @@ class EmbeddingOptimizer(nn.Module):
         pt_wt = w_t_norm[..., None, None] * tgt_cos
         pt_wc = w_c_ir_norm[..., None, None] * tgt_cos
 
-        corrected_embedding = embedding + alpha * (pt_wt - pt_wc) + (1-alpha) * (pc_wc - pc_wt) 
+        corrected_embedding = embedding + alpha * (pt_wt - pt_wc) + (1-alpha) * (pc_wc - pc_wt)
 
         return_dict = {
             "target_mask": target_mask,

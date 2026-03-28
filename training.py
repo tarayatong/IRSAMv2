@@ -11,7 +11,7 @@ from training import Trainer, seed_everything, metricWrapper
 from loguru import logger
 import datetime
 import yaml
-from sam_spl.constractive_loss import compute_relative_contrastive_loss, compute_target_centric_contrastive_loss, compute_manifold_contrastive_loss
+from sam_spl.constractive_loss import compute_relative_contrastive_loss, compute_target_centric_contrastive_loss, compute_manifold_contrastive_loss, compute_ternary_manifold_contrastive_loss
 
 
 def main():
@@ -59,7 +59,7 @@ def main():
     )
     parser.add_argument(
         "--eta_min",
-        default=1e-4,
+        default=1e-6,
         type=float,
         help="Minimum learning rate for scheduler",
     )
@@ -96,7 +96,7 @@ def main():
     )
     parser.add_argument(
         "--constractive_loss",
-        default='manifold',
+        default='ternary_manifold',
         type=str,
         help="Contrastive loss function, target_centric or None",
     )
@@ -180,6 +180,8 @@ def main():
         constractive_loss = compute_relative_contrastive_loss
     elif args.constractive_loss == "manifold":
         constractive_loss = compute_manifold_contrastive_loss
+    elif args.constractive_loss == "ternary_manifold":
+        constractive_loss = compute_ternary_manifold_contrastive_loss
 
     # Initialize Trainer
     trainer = Trainer(

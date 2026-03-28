@@ -128,6 +128,56 @@ def compute_manifold_contrastive_loss(emb_prime, gt_mask, temperature=0.1):
     loss_contrastive = F.cross_entropy(logits, mask_flat.squeeze(1).long())
     return loss_contrastive
 
+def compute_ternary_manifold_contrastive_loss(emb_prime, gt_mask, clutter_label, temperature=0.1):
+    """
+    三元流形聚类损失。
+    利用你精妙的 Canny/Laplacian 算子提取的先验掩码，
+    在特征空间中独立塑造【平滑背景】、【高频杂波】和【目标】三个互斥的特征星系。
+    """
+    B, C, H, W = emb_prime.shape
+    if gt_mask.shape != (B, 1, H, W):
+        gt_mask = F.interpolate(gt_mask.float(), size=(H, W), mode='nearest')
+        clutter_label = F.interpolate(clutter_label.float(), size=(H, W), mode='nearest')
+    emb_flat = emb_prime.view(B, C, -1)     
+    
+    # 1. 准备并对齐三类掩码
+    gt_mask_flat = (gt_mask > 0.5).float().view(B, 1, -1) 
+    # 【高频杂波掩码】：必须在你的 Canny 掩码里，并且不能是目标区域
+    clutter_mask_flat = ((clutter_label > 0.5).float() * (1.0 - gt_mask)).view(B, 1, -1)
+    
+    # 【平滑背景掩码】：既不是目标，也不是高频杂波的广阔区域
+    flat_bg_mask_flat = (1.0 - gt_mask_flat) * (1.0 - clutter_mask_flat)
+    
+    eps = 1e-6
+    # 2. 动态求解三个物理特征质心
+    fg_center = (emb_flat * gt_mask_flat).sum(dim=-1, keepdim=True) / (gt_mask_flat.sum(dim=-1, keepdim=True) + eps)
+    clutter_center = (emb_flat * clutter_mask_flat).sum(dim=-1, keepdim=True) / (clutter_mask_flat.sum(dim=-1, keepdim=True) + eps)
+    flat_center = (emb_flat * flat_bg_mask_flat).sum(dim=-1, keepdim=True) / (flat_bg_mask_flat.sum(dim=-1, keepdim=True) + eps)
+    
+    # 3. 归一化进入角度流形
+    emb_norm = F.normalize(emb_flat, p=2, dim=1) 
+    fg_center_norm = F.normalize(fg_center, p=2, dim=1) 
+    clutter_center_norm = F.normalize(clutter_center, p=2, dim=1) 
+    flat_center_norm = F.normalize(flat_center, p=2, dim=1) 
+    
+    # 4. 计算每个像素对三个大本营的归属感 (余弦相似度)
+    sim_fg = (emb_norm * fg_center_norm).sum(dim=1) / temperature
+    sim_clutter = (emb_norm * clutter_center_norm).sum(dim=1) / temperature
+    sim_flat = (emb_norm * flat_center_norm).sum(dim=1) / temperature
+    
+    # 5. 构建 3分类 的 Logits [B, 3, N]
+    # 索引 0: 平滑背景, 索引 1: 高频杂波, 索引 2: 目标
+    logits = torch.stack([sim_flat, sim_clutter, sim_fg], dim=1) 
+    
+    # 6. 生成 0, 1, 2 的类别标签矩阵
+    labels = torch.zeros((B, H * W), dtype=torch.long, device=emb_prime.device)
+    labels[clutter_mask_flat.squeeze(1) > 0.5] = 1  # 杂波归位
+    labels[gt_mask_flat.squeeze(1) > 0.5] = 2       # 目标归位
+    
+    # 7. 交给 CrossEntropy 施展隐式的排斥与聚合魔法！
+    loss_contrastive = F.cross_entropy(logits, labels)
+    
+    return loss_contrastive
 
 def compute_ohem_bce_loss(pred_logits, gt_mask):
     """

@@ -179,6 +179,7 @@ class Trainer:
                         feat_contrast_loss = self.constractive_loss(
                             emb_prime=return_dict["corrected_embedding"],
                             gt_mask=batch_masks,
+                            clutter_label=clutter_labels,
                             temperature=0.1
                         )
                     if idx < 0:
@@ -269,6 +270,7 @@ class Trainer:
                         feat_contrast_loss = self.constractive_loss(
                             emb_prime=return_dict["corrected_embedding"],
                             gt_mask=batch_masks,
+                            clutter_label=clutter_labels,
                             temperature=0.1
                         )
                     # 加上 query 负相关和特征对比损失
