@@ -179,7 +179,7 @@ def compute_ternary_manifold_contrastive_loss(emb_prime, gt_mask, clutter_label,
     
     return loss_contrastive
 
-def compute_ohem_bce_loss(pred_logits, gt_mask):
+def compute_ohem_bce_loss(pred_logits, gt_mask, clutter_labels):
     """
     带有高频杂波镇压机制的自适应 BCE Loss。
     pred_logits: 乘过了 tau 的预测图
@@ -189,9 +189,12 @@ def compute_ohem_bce_loss(pred_logits, gt_mask):
     
     weight_map = torch.ones_like(p_pred)
     neg_mask = (gt_mask <= 0.5)
+    clt_mask = (clutter_labels > 0.1)
     
     # OHEM 核心：对于背景像素，它被预测为目标的概率越高（越像目标的杂波），分配给它的惩罚权重就越大！
     # 垫底加个 0.1 保证最平滑的背景也有微弱更新
-    weight_map[neg_mask] = p_pred[neg_mask].detach() + 0.1 
+    weight_map[~neg_mask] = 1.0 + 5.0 * (1.0 - p_pred[~neg_mask]).detach() # 目标像素保持权重为 1
+    weight_map[neg_mask] = p_pred[neg_mask].detach()
+    weight_map[clt_mask] = 1.0 + 3.0 * p_pred[clt_mask].detach()
     
     return (loss_bce * weight_map).mean()

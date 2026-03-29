@@ -149,7 +149,7 @@ class Trainer:
             pred_logits, return_dicts = self.model(batch_data)
             pred_loss = 0
             for pred_logit in pred_logits:
-                pred_loss += self.loss_fn(pred_logit, batch_masks)
+                pred_loss += self.loss_fn(pred_logit, batch_masks, clutter_labels)
             if return_dicts is not None:
                 if self.constractive_loss is None:
                     inter_bce = 0
@@ -171,9 +171,9 @@ class Trainer:
                     query_neg_loss = 0
                     feat_contrast_loss = 0
                     for return_dict in return_dicts:
-                        tgt_bce_loss = self.loss_fn(return_dict["target_mask"], batch_masks)
-                        clt_bce_loss = self.loss_fn(return_dict["clutter_mask"], clutter_labels)
-                        inter_bce += tgt_bce_loss + 0.1 * clt_bce_loss
+                        tgt_bce_loss = self.loss_fn(return_dict["target_mask"], batch_masks, clutter_labels)
+                        # clt_bce_loss = self.loss_fn(return_dict["clutter_mask"], clutter_labels)
+                        inter_bce += tgt_bce_loss
                         cos_sim_query = F.cosine_similarity(return_dict["w_t"], return_dict["w_c"], dim=1)
                         query_neg_loss += (cos_sim_query**2).mean()
                         feat_contrast_loss = self.constractive_loss(
@@ -248,7 +248,7 @@ class Trainer:
             clutter_labels = clutter_labels.to(self.device).float().clamp(0, 1)
             masks, return_dicts = self.model(batch_data)
             pred_logit = masks[0]
-            pred_loss = self.loss_fn(pred_logit.sigmoid(), batch_masks)
+            pred_loss = self.loss_fn(pred_logit.sigmoid(), batch_masks, clutter_labels)
             if return_dicts is not None:
                 if self.constractive_loss is None:
                     inter_bce = 0
@@ -264,7 +264,7 @@ class Trainer:
                     query_neg_loss = 0
                     feat_contrast_loss = 0
                     for return_dict in return_dicts:
-                        inter_bce += self.loss_fn(return_dict["target_mask"], batch_masks)
+                        inter_bce += self.loss_fn(return_dict["target_mask"], batch_masks, clutter_labels)
                         cos_sim_query = F.cosine_similarity(return_dict["w_t"], return_dict["w_c"], dim=1)
                         query_neg_loss += (cos_sim_query + 1.0).mean()
                         feat_contrast_loss = self.constractive_loss(

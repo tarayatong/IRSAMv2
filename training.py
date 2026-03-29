@@ -11,7 +11,7 @@ from training import Trainer, seed_everything, metricWrapper
 from loguru import logger
 import datetime
 import yaml
-from sam_spl.constractive_loss import compute_relative_contrastive_loss, compute_target_centric_contrastive_loss, compute_manifold_contrastive_loss, compute_ternary_manifold_contrastive_loss
+from sam_spl.constractive_loss import compute_relative_contrastive_loss, compute_target_centric_contrastive_loss, compute_manifold_contrastive_loss, compute_ternary_manifold_contrastive_loss, compute_ohem_bce_loss
 
 
 def main():
@@ -53,7 +53,7 @@ def main():
     )
     parser.add_argument(
         "--loss_func",
-        default="bceloss",
+        default="weighted_bceloss",
         type=str,
         help="Loss function to use (default: bceloss)",
     )
@@ -83,7 +83,7 @@ def main():
     )
     parser.add_argument(
         "--loss_weights",
-        default=[1.0, 0.5, 0.1, 0.1],
+        default=[1.0, 0.5, 0.0, 0.1],
         type=list,
         help="Weights for loss functions, [1.0, 0.5, 0.1] for pred_bce, cos_loss, inter_bce; "
         "[1.0, 0.5, 0.1, 0.2] for pred_bce, query_cos, target_inter_bce, contrastive_loss",
@@ -173,7 +173,10 @@ def main():
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=args.epoch, eta_min=args.eta_min
     )
-    loss_fun = nn.BCEWithLogitsLoss(reduction="mean")
+    if args.loss_func == "bceloss":
+        loss_fun = nn.BCEWithLogitsLoss(reduction="mean")
+    elif args.loss_func == "weighted_bceloss":
+        loss_fun = compute_ohem_bce_loss
     if args.constractive_loss == "target_centric":  
         constractive_loss = compute_target_centric_contrastive_loss 
     elif args.constractive_loss == "relative":
