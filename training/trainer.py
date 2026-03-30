@@ -170,28 +170,22 @@ class Trainer:
                     inter_bce = 0
                     query_neg_loss = 0
                     feat_contrast_loss = 0
-                    for return_dict in return_dicts:
-                        tgt_bce_loss = self.loss_fn(return_dict["target_mask"], batch_masks, clutter_labels)
-                        # clt_bce_loss = self.loss_fn(return_dict["clutter_mask"], clutter_labels)
-                        inter_bce += tgt_bce_loss
+                    for layer, return_dict in enumerate(return_dicts):
                         cos_sim_query = F.cosine_similarity(return_dict["w_t"], return_dict["w_c"], dim=1)
                         query_neg_loss += (cos_sim_query**2).mean()
-                        feat_contrast_loss = self.constractive_loss(
-                            emb_prime=return_dict["corrected_embedding"],
-                            gt_mask=batch_masks,
-                            clutter_label=clutter_labels,
-                            temperature=0.1
-                        )
-                    if idx < 0:
-                        loss = self.loss_weights[0]*pred_loss + self.loss_weights[2]*inter_bce
-                    elif idx < 0:
-                        loss = (self.loss_weights[0] * pred_loss + 
-                                self.loss_weights[2] * inter_bce + 
-                                self.loss_weights[1] * query_neg_loss)
-                    else:        
-                        loss = (self.loss_weights[0] * pred_loss + 
-                                self.loss_weights[2] * inter_bce + 
-                                self.loss_weights[1] * query_neg_loss + self.loss_weights[3] * feat_contrast_loss)
+                        if layer < len(return_dicts)//2:
+                            feat_contrast_loss += self.constractive_loss(
+                                emb_prime=return_dict["corrected_embedding"],
+                                gt_mask=batch_masks,
+                                clutter_label=clutter_labels,
+                                temperature=0.1
+                            )
+                        tgt_bce_loss = self.loss_fn(return_dict["target_mask"], batch_masks, clutter_labels)
+                        clt_bce_loss = self.loss_fn(return_dict["clutter_mask"], clutter_labels, batch_masks)
+                        inter_bce += tgt_bce_loss + 0.1 * clt_bce_loss
+                    loss = (self.loss_weights[0] * pred_loss + 
+                            self.loss_weights[2] * inter_bce + 
+                            self.loss_weights[1] * query_neg_loss + self.loss_weights[3] * feat_contrast_loss)
             else:
                 loss = pred_loss
             self.optimizer.zero_grad()

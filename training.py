@@ -83,7 +83,7 @@ def main():
     )
     parser.add_argument(
         "--loss_weights",
-        default=[1.0, 0.5, 0.0, 0.1],
+        default=[1.0, 0.1, 0.1, 0.1],
         type=list,
         help="Weights for loss functions, [1.0, 0.5, 0.1] for pred_bce, cos_loss, inter_bce; "
         "[1.0, 0.5, 0.1, 0.2] for pred_bce, query_cos, target_inter_bce, contrastive_loss",

@@ -170,13 +170,16 @@ class EmbeddingOptimizer(nn.Module):
         clt_proj = (w_c_norm[..., None, None] * embedding).sum(dim=1, keepdim=True)
         target_mask = self.upsample(tgt_proj)
         clutter_mask = self.upsample(clt_proj)
+        confusion_gate = F.relu(tgt_proj) * F.relu(clt_proj)
         alpha = self.alpha_head(alpha_in)
+        alpha_t = alpha * confusion_gate
+        alpha_c = (1-alpha) * confusion_gate
         pc_wt = w_t_norm[..., None, None] * clt_proj
         pc_wc = w_c_ir_norm[..., None, None] * clt_proj
         pt_wt = w_t_norm[..., None, None] * tgt_proj
         pt_wc = w_c_ir_norm[..., None, None] * tgt_proj
 
-        corrected_embedding = embedding + alpha * (pt_wt - pt_wc) - (1-alpha) * (pc_wt)
+        corrected_embedding = embedding + (alpha_t * (pt_wt - pt_wc) + alpha_c * (pc_wc - pc_wt))
 
         return_dict = {
             "target_mask": target_mask,
@@ -500,7 +503,7 @@ class SamAdaptor(nn.Module):
                 alpha_in = F.interpolate(deep_dict['alpha'], deep_feat.shape[-2:], mode='bilinear', align_corners=False)
                 deep_dict = self.embedding_optimizer_up[i](deep_feat, deep_dict["w_t"], deep_dict["w_c_ir"], alpha_in, layer_index=i+1)
                 deep_feat = deep_dict["corrected_embedding"]
-                deep_mask = (deep_dict["w_t"][..., None, None] * deep_feat).sum(dim=1, keepdim=True)
+                deep_mask = (deep_dict["w_t"][..., None, None] * deep_feat).sum(dim=1, keepdim=True) #- (deep_dict["w_c"][..., None, None] * deep_feat).sum(dim=1, keepdim=True)
                 masks.append(deep_mask)
                 return_dicts.append(deep_dict)
         else:
