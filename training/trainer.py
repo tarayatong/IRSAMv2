@@ -25,6 +25,7 @@ import enlighten
 
 # Import metricWrapper for type hints
 from .metrics_config import metricWrapper
+import matplotlib.pyplot as plt
 
 class Trainer:
     """
@@ -146,6 +147,7 @@ class Trainer:
             batch_data = batch_data.to(self.device).float()
             batch_masks = batch_masks.to(self.device).float().clamp(0, 1)
             clutter_labels = clutter_labels.to(self.device).float().clamp(0, 1)
+            # plt.imsave(f"debug/clutter_labels.png", clutter_labels[0, 0].cpu().numpy(), cmap="gray")
             pred_logits, return_dicts = self.model(batch_data)
             pred_loss = 0
             for pred_logit in pred_logits:
@@ -181,13 +183,21 @@ class Trainer:
                                 temperature=0.1
                             )
                         tgt_bce_loss = self.loss_fn(return_dict["target_mask"], batch_masks, clutter_labels)
-                        clt_bce_loss = self.loss_fn(return_dict["clutter_mask"], clutter_labels, batch_masks)
+                        clt_bce_loss = F.binary_cross_entropy_with_logits(return_dict["clutter_mask"], clutter_labels)
                         inter_bce += tgt_bce_loss + 0.1 * clt_bce_loss
                     loss = (self.loss_weights[0] * pred_loss + 
                             self.loss_weights[2] * inter_bce + 
                             self.loss_weights[1] * query_neg_loss + self.loss_weights[3] * feat_contrast_loss)
             else:
-                loss = pred_loss
+                feat_contrast_loss = 0
+                for pred in pred_logits:
+                    feat_contrast_loss += self.constractive_loss(
+                                emb_prime=pred,
+                                gt_mask=batch_masks,
+                                clutter_label=clutter_labels,
+                                temperature=0.1
+                            )
+                loss = pred_loss + self.loss_weights[3] * feat_contrast_loss
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
@@ -273,7 +283,7 @@ class Trainer:
                             self.loss_weights[2] * inter_bce + 
                             self.loss_weights[3] * feat_contrast_loss) # 给对比损失加个新权重
             else:
-                loss = self.loss_fn(pred_logit.sigmoid(), batch_masks)
+                loss = self.loss_fn(pred_logit.sigmoid(), batch_masks, clutter_labels)
             total_loss += loss.item() * batch_data.size(0)
             total_samples += batch_data.size(0)
             if self.rank == 0:

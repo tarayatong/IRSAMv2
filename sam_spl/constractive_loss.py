@@ -105,7 +105,7 @@ def compute_smoothed_target_contrastive_loss(emb_prime, w_t, gt_mask, temperatur
     return loss
 
 
-def compute_manifold_contrastive_loss(emb_prime, gt_mask, temperature=0.1):
+def compute_manifold_contrastive_loss(emb_prime, gt_mask, clutter_label, temperature=0.1):
     B, C, H, W = emb_prime.shape
     if gt_mask.shape != (B, 1, H, W):
         gt_mask = F.interpolate(gt_mask.float(), size=(H, W), mode='nearest')
@@ -173,6 +173,9 @@ def compute_ternary_manifold_contrastive_loss(emb_prime, gt_mask, clutter_label,
     labels = torch.zeros((B, H * W), dtype=torch.long, device=emb_prime.device)
     labels[clutter_mask_flat.squeeze(1) > 0.5] = 1  # 杂波归位
     labels[gt_mask_flat.squeeze(1) > 0.5] = 2       # 目标归位
+    # labels_onehot = F.one_hot(labels, num_classes=3).permute(0, 2, 1).float()
+    # sims_truncated = torch.where(labels_onehot > 0.5, sims, F.relu(sims))
+    # logits = sims_truncated / temperature
     
     # 7. 交给 CrossEntropy 施展隐式的排斥与聚合魔法！
     loss_contrastive = F.cross_entropy(logits, labels)
@@ -191,8 +194,8 @@ def compute_ohem_bce_loss(pred_logits, gt_mask, clutter_labels):
     neg_mask = (gt_mask <= 0.5)
     clt_mask = (clutter_labels > 0.1)
     
-    # OHEM 核心：对于背景像素，它被预测为目标的概率越高（越像目标的杂波），分配给它的惩罚权重就越大！
-    # 垫底加个 0.1 保证最平滑的背景也有微弱更新
+    # # OHEM 核心：对于背景像素，它被预测为目标的概率越高（越像目标的杂波），分配给它的惩罚权重就越大！
+    # # 垫底加个 0.1 保证最平滑的背景也有微弱更新
     weight_map[~neg_mask] = 1.0 + 5.0 * (1.0 - p_pred[~neg_mask]).detach() # 目标像素保持权重为 1
     weight_map[neg_mask] = 1.0 + p_pred[neg_mask].detach()
     weight_map[clt_mask] = 1.0 + 5.0 * p_pred[clt_mask].detach()

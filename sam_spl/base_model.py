@@ -170,16 +170,13 @@ class EmbeddingOptimizer(nn.Module):
         clt_proj = (w_c_norm[..., None, None] * embedding).sum(dim=1, keepdim=True)
         target_mask = self.upsample(tgt_proj)
         clutter_mask = self.upsample(clt_proj)
-        confusion_gate = F.relu(tgt_proj) * F.relu(clt_proj)
         alpha = self.alpha_head(alpha_in)
-        alpha_t = alpha * confusion_gate
-        alpha_c = (1-alpha) * confusion_gate
         pc_wt = w_t_norm[..., None, None] * clt_proj
         pc_wc = w_c_ir_norm[..., None, None] * clt_proj
         pt_wt = w_t_norm[..., None, None] * tgt_proj
         pt_wc = w_c_ir_norm[..., None, None] * tgt_proj
 
-        corrected_embedding = embedding + (alpha_t * (pt_wt - pt_wc) + alpha_c * (pc_wc - pc_wt))
+        corrected_embedding = embedding - (alpha * pt_wc + (1-alpha) * pc_wt)
 
         return_dict = {
             "target_mask": target_mask,

@@ -90,7 +90,7 @@ def main():
     )
     parser.add_argument(
         "--clutter_mode",
-        default="combined",
+        default="canny",
         type=str,
         help="Clutter mode for edge detection (e.g., canny, combined)",
     )

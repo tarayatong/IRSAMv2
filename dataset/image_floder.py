@@ -6,7 +6,7 @@ import torch
 import torchvision.transforms as transforms
 from PIL import Image, ImageFilter, ImageOps
 from torch.utils.data import Dataset
-
+import matplotlib.pyplot as plt
 
 def Normalized(img, dataset):
     if dataset == "NUDT-SIRST":
@@ -162,9 +162,9 @@ def directional_sensitive_edge_detection(im_np, mask_np, threshold=33.0, mode="c
 
         if target_indices is not None:
             target_response = response_abs[target_indices]
-            lap_threshold = target_response.mean() * 0.5
+            lap_threshold = target_response.mean()*1.2 
         else:
-            lap_threshold = img_gray.mean() * 0.5
+            lap_threshold = img_gray.max()
 
         laplace_mask = (response_abs > lap_threshold)
 
@@ -173,13 +173,15 @@ def directional_sensitive_edge_detection(im_np, mask_np, threshold=33.0, mode="c
 
         if target_indices is not None:
             target_tophat = tophat[target_indices]
-            tophat_threshold = target_tophat.mean() * 0.5
+            tophat_threshold = target_tophat.mean()*1.5
         else:
             tophat_threshold = threshold
 
         tophat_mask = (tophat > tophat_threshold)
+        # plt.imsave(f"debug/tophat.png", tophat_mask, cmap="gray")
+        # plt.imsave(f"debug/laplace.png", laplace_mask, cmap="gray")
         combined_mask = np.logical_or(laplace_mask, tophat_mask).astype(np.uint8) * 255
-        combined_mask = cv2.medianBlur(combined_mask, 3)
+        # combined_mask = cv2.medianBlur(combined_mask, 3)
         return combined_mask
 
     else:
@@ -428,8 +430,8 @@ class ImageFolder(Dataset):
             t2 = abs(mean_target - im_np.mean())
             # edge = cv2.Canny(im_np, int(t1), int(t2)) # Canny expects int thresholds usually
             edge = directional_sensitive_edge_detection(im_np, gt_np, threshold=min(t1, t2), mode=self.clutter_mode)
-            blurred = cv2.GaussianBlur(edge, (3, 3), 0)
-            clutter_label_np = ((blurred) > 0).astype(np.uint8) * 255 
+            # blurred = cv2.GaussianBlur(edge, (3, 3), 0)
+            clutter_label_np = ((edge) > 0).astype(np.uint8) * 255 
             
             # Mask out Clutter using dilated GT
             clutter_label_np = clutter_label_np * (1 - dilated_gt)

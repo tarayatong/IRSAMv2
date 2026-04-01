@@ -54,14 +54,15 @@ def evalution(test_loader, predictor, device, save_dir=None):
 def main(
 ):
     # Argument parsing
+    # python testing.py --dataset NUDT-SIRST --image_size 256 --weights /home/tyf/code/IRSAMv2/checkpoints/conloss/NUDT-SIRST/last.pt --device cuda:0 --save_dir results/NUDT
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--local_rank", default=-1, type=int)
-    parser.add_argument("--dataset", default="IRSTD-1k", type=str)
-    parser.add_argument("--image_size", default=512, type=int)
-    parser.add_argument("--batch_size", default=12, type=int)
+    parser.add_argument("--dataset", default="NUDT-SIRST", type=str)
+    parser.add_argument("--image_size", default=256, type=int)
+    parser.add_argument("--batch_size", default=8, type=int)
     parser.add_argument("--data_path", default="./dataset/set_configs", type=str)
-    parser.add_argument("--weights", default="./checkpoints/IRSTD-1k.pt", type=str)
+    parser.add_argument("--weights", default="/home/tyf/code/IRSAMv2/checkpoints/conloss/NUDT-SIRST/last.pt", type=str)
     parser.add_argument("--device", default="cuda:1", type=str)
     parser.add_argument("--seed", default=111, type=int)
     parser.add_argument("--save_dir", default=None, type=str, help="Directory to save test results")
