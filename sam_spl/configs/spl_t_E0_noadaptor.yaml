@@ -1,0 +1,16 @@
+
+# E0: 冻结 SAM2 预训练 trunk + 极简 neck + 普通 decoder
+# 无 adaptor / 并行 CNN / PMD，无 OSD/TCL。用于隔离裸预训练特征的上限。
+backbone_channel_list: [384, 192, 96]
+stages: [1, 2, 7]
+global_att_blocks: [5, 7, 9]
+block: res
+embed_dim: 96
+dense_low_channels: [96, 48, 24]
+window_spec: [8, 4, 14]
+use_sam_decoder: true
+use_alpha: false        # 关闭 OSD/TCL 相关（核心创新）
+use_adaptor: false      # 关闭 adaptor + 并行 CNN（走 trunk-only 极简 neck）
+pretrained: true        # 加载 SAM2.1 预训练权重
+freeze_encoder: true    # 冻结 trunk
+sam_ckpt_path: ./sam_spl/sam2_ckpt/sam2.1_hiera_tiny.pt

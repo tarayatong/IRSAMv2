@@ -6,8 +6,9 @@ with the project's custom decoder and mask heads. The key elements are:
 - `DynamicConvBlock` and `build_dynamic_conv`: helpers to build dynamic
     convolutional blocks that optionally downsample based on stage count.
 
-Only documentation strings have been added/updated; no computational logic
-is changed by these edits.
+The constructor exposes explicit switches for the adaptor path, pretrained
+initialization, encoder freezing, and OSD/TCL components so controlled
+ablations do not register unused parameters.
 """
 
 import torch
@@ -213,10 +214,14 @@ class SamAdaptor(nn.Module):
         use_sam_decoder=True,
         pe_inch=[24, 48, 96],
         use_alpha=True,
+        use_adaptor=True,
+        freeze_encoder=True,
     ):
         super().__init__()
         self.use_sam_decoder = use_sam_decoder
         self.use_alpha = use_alpha
+        self.use_adaptor = use_adaptor
+        self.freeze_encoder = freeze_encoder
         self.num_mask_tokens = num_mask_tokens
         self.dense_low_channels = backbone_channel_list + dense_low_channels[1:]
         self.pe_inch = pe_inch
@@ -233,6 +238,7 @@ class SamAdaptor(nn.Module):
             _block=_block,
             backbone_channel_list=backbone_channel_list,
             stages=stages,
+            use_adaptor=use_adaptor,
         )
         self.tau = 15.0
         self.skip_channel_gen = dense_low_channels
@@ -266,11 +272,11 @@ class SamAdaptor(nn.Module):
                 for _ in range(self.num_mask_tokens)
             ])
             
-            # Use the new EmbeddingOptimizer
-            self.embedding_optimizer = EmbeddingOptimizer(self.decoder_dim, dense_low_channels[0], dense_low_channels[0], self.num_mask_tokens, 4)
-            self.embedding_optimizer_up = nn.ModuleList([
-                EmbeddingOptimizer(dense_low_channels[i], dense_low_channels[i]//2, 1, self.num_mask_tokens, 2**(len(dense_low_channels)-1-i), bool(i>0)) for i in range(len(dense_low_channels))
-            ])
+            if self.use_alpha:
+                self.embedding_optimizer = EmbeddingOptimizer(self.decoder_dim, dense_low_channels[0], dense_low_channels[0], self.num_mask_tokens, 4)
+                self.embedding_optimizer_up = nn.ModuleList([
+                    EmbeddingOptimizer(dense_low_channels[i], dense_low_channels[i]//2, 1, self.num_mask_tokens, 2**(len(dense_low_channels)-1-i), bool(i>0)) for i in range(len(dense_low_channels))
+                ])
             self.image_pe_encoder = MultiScalePositionalEncoder(
                 in_chans=pe_inch,
                 down_times=[len(self.dense_low_channels) - i - 2 for i in range(len(pe_inch))],
@@ -420,9 +426,14 @@ class SamAdaptor(nn.Module):
         """Freeze parts of the image encoder while leaving promote generator
         and decoder transformer parameters trainable.
 
-        This helper sets ``requires_grad`` appropriately based on parameter
-        name patterns.
+        When ``self.freeze_encoder`` is False (e.g., the random-initialized,
+        fully-trainable baseline), the trunk is left trainable and nothing is
+        frozen.
         """
+        if not self.freeze_encoder:
+            for para in self.parameters():
+                para.requires_grad_(True)
+            return
         for name, para in self.named_parameters():
             if "image_encoder.trunk" in name and "promote_genertor" not in name:
                 para.requires_grad_(False)
@@ -439,7 +450,10 @@ class SamAdaptor(nn.Module):
         parameters.
         """
         trunk_param = sum(p.numel() for p in self.image_encoder.trunk.parameters()) / 1_000_000
-        pmtg_param = sum(p.numel() for p in self.image_encoder.trunk.promote_genertor.parameters()) / 1_000_000
+        promote_generator = getattr(self.image_encoder.trunk, "promote_genertor", None)
+        pmtg_param = 0.0
+        if promote_generator is not None:
+            pmtg_param = sum(p.numel() for p in promote_generator.parameters()) / 1_000_000
         all_param = sum(p.numel() for p in self.parameters()) / 1_000_000
         print(f"The parameter number of the model is {all_param - trunk_param + pmtg_param:.2f}M")
 
@@ -565,6 +579,7 @@ class SamAdaptor(nn.Module):
         """
         out_image_size = x.shape[-2:]
         features = self.image_encoder(x)
+        return_dict = None
         if self.use_sam_decoder:
             masks, return_dict = self._process_deep_features(features)
         else:
@@ -588,6 +603,9 @@ def make_adaptor(
     sam_ckpt_path=None,
     num_mask_tokens=2,
     use_alpha=False,
+    use_adaptor=True,
+    pretrained=True,
+    freeze_encoder=True,
 ):
     """_summary_
 
@@ -604,7 +622,7 @@ def make_adaptor(
     Returns:
         nn.Module: sam adaptor
     """
-    promote_generator = MultiScaleBlock(stages=stages, embed_dim=embed_dim)
+    promote_generator = MultiScaleBlock(stages=stages, embed_dim=embed_dim) if use_adaptor else None
 
     sam_encoder = Hiera(
         promote_genertor=promote_generator,
@@ -634,7 +652,12 @@ def make_adaptor(
         pe_inch=pe_inch,
         num_mask_tokens=num_mask_tokens,
         use_alpha=use_alpha,
+        use_adaptor=use_adaptor,
+        freeze_encoder=freeze_encoder,
     )
-    if sam_ckpt_path is not None:
+    # `pretrained` gates whether SAM2 pretrained weights are loaded. The random-
+    # initialized fully-trainable baseline sets pretrained=False (and usually
+    # freeze_encoder=False) to isolate the contribution of the pretrained trunk.
+    if pretrained and sam_ckpt_path is not None:
         predictor._load_sam_checkpoint(sam_ckpt_path)
     return predictor

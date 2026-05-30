@@ -1,0 +1,16 @@
+
+# E5: 纯 Base（含 adaptor），随机初始化、不冻结、全量训练。
+# 用于隔离 SAM2 预训练权重相对随机初始化的贡献（与 E1/base 对比）。
+backbone_channel_list: [384, 192, 96]
+stages: [1, 2, 7]
+global_att_blocks: [5, 7, 9]
+block: res
+embed_dim: 96
+dense_low_channels: [96, 48, 24]
+window_spec: [8, 4, 14]
+use_sam_decoder: true
+use_alpha: false        # 纯 Base，无 OSD/TCL
+use_adaptor: true       # 保留 adaptor + 并行 CNN（Base 的设置）
+pretrained: false       # 不加载预训练权重（随机初始化）
+freeze_encoder: false   # 不冻结，全量可训练
+sam_ckpt_path: ./sam_spl/sam2_ckpt/sam2.1_hiera_tiny.pt

@@ -1,5 +1,6 @@
 import os
 import argparse
+import ast
 
 import torch
 import torch.nn as nn
@@ -12,6 +13,38 @@ from loguru import logger
 import datetime
 import yaml
 from sam_spl.constractive_loss import compute_relative_contrastive_loss, compute_target_centric_contrastive_loss, compute_manifold_contrastive_loss, compute_ternary_manifold_contrastive_loss, compute_ohem_bce_loss
+
+
+def parse_loss_weights(value):
+    if isinstance(value, list):
+        return [float(v) for v in value]
+    try:
+        parsed = ast.literal_eval(value)
+    except (ValueError, SyntaxError):
+        parsed = [item.strip() for item in value.split(",")]
+    if not isinstance(parsed, (list, tuple)):
+        raise argparse.ArgumentTypeError("loss_weights must be a list, e.g. [1.0,0.1,0.1,0.0]")
+    return [float(v) for v in parsed]
+
+
+def resolve_contrastive_loss(name):
+    if name is None:
+        return None
+    normalized = str(name).strip().lower()
+    if normalized in {"none", "null", "off", "false", "0"}:
+        return None
+    losses = {
+        "target_centric": compute_target_centric_contrastive_loss,
+        "relative": compute_relative_contrastive_loss,
+        "manifold": compute_manifold_contrastive_loss,
+        "ternary_manifold": compute_ternary_manifold_contrastive_loss,
+    }
+    if normalized not in losses:
+        raise ValueError(
+            f"Unknown contrastive_loss '{name}'. Expected one of: "
+            f"{', '.join(list(losses.keys()) + ['none'])}"
+        )
+    return losses[normalized]
 
 
 def main():
@@ -84,7 +117,7 @@ def main():
     parser.add_argument(
         "--loss_weights",
         default=[1.0, 0.1, 0.1, 0.1],
-        type=list,
+        type=parse_loss_weights,
         help="Weights for loss functions, [1.0, 0.5, 0.1] for pred_bce, cos_loss, inter_bce; "
         "[1.0, 0.5, 0.1, 0.2] for pred_bce, query_cos, target_inter_bce, contrastive_loss",
     )
@@ -95,10 +128,12 @@ def main():
         help="Clutter mode for edge detection (e.g., canny, combined)",
     )
     parser.add_argument(
+        "--contrastive_loss",
         "--constractive_loss",
+        dest="contrastive_loss",
         default='ternary_manifold',
         type=str,
-        help="Contrastive loss function, target_centric or None",
+        help="Contrastive loss function: ternary_manifold, manifold, relative, target_centric, or none",
     )
     parser.add_argument(
         "--log_dir",
@@ -177,14 +212,9 @@ def main():
         loss_fun = nn.BCEWithLogitsLoss(reduction="mean")
     elif args.loss_func == "weighted_bceloss":
         loss_fun = compute_ohem_bce_loss
-    if args.constractive_loss == "target_centric":  
-        constractive_loss = compute_target_centric_contrastive_loss 
-    elif args.constractive_loss == "relative":
-        constractive_loss = compute_relative_contrastive_loss
-    elif args.constractive_loss == "manifold":
-        constractive_loss = compute_manifold_contrastive_loss
-    elif args.constractive_loss == "ternary_manifold":
-        constractive_loss = compute_ternary_manifold_contrastive_loss
+    else:
+        raise ValueError(f"Unknown loss_func '{args.loss_func}'. Expected bceloss or weighted_bceloss.")
+    contrastive_loss = resolve_contrastive_loss(args.contrastive_loss)
 
     # Initialize Trainer
     trainer = Trainer(
@@ -200,7 +230,7 @@ def main():
         distributed=distributed,
         save_dir=args.save_dir,
         loss_weights=args.loss_weights,
-        constractive_loss=constractive_loss,
+        constractive_loss=contrastive_loss,
         metric_wrapper = metricWrapper(),
     )
     

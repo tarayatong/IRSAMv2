@@ -22,37 +22,54 @@ class ImageEncoder(nn.Module):
         backbone_channel_list: list[int] = [384, 192, 96],
         down_times: int = 3,
         stages: list[int] = [1, 2, 7],
+        use_adaptor: bool = True,
     ):
         super().__init__()
         self.stages = stages
-
-        self.channel_gen = []
-        self.inc0 = nn.ModuleList()
-        for i in range(down_times - 1, -1, -1):
-            input_dim = 3 if i == down_times - 1 else backbone_channel_list[-1] // (2 ** (i + 1))
-            out_dim = backbone_channel_list[-1] // (2**i)
-            self.channel_gen.append((input_dim, out_dim))
-            self.inc0.append(_make_layer(_block, input_dim, out_dim))
-
+        # When False, the parallel-CNN adaptor (inc0/incs/pmd/promote_genertor)
+        # is bypassed and multi-scale features are derived solely from the frozen
+        # trunk via a minimal 1x1-conv + upsample projection neck. This realizes
+        # the "frozen pretrained encoder + plain decoder, no adaptor" baseline.
+        self.use_adaptor = use_adaptor
         self.stage_ends = [sum(stages[:i]) - 1 for i in range(1, len(stages) + 1)]
         self.stage_begin = [sum(stages[:i-1]) for i in range(1, len(stages) + 1)]
-
-        self.incs = nn.ModuleList()
-        embed_dim = backbone_channel_list[-1]
-        for i in range(len(stages) - 1):
-            dim_out = embed_dim * 2
-            self.incs.append(_make_layer(_block, embed_dim, dim_out, num_blocks=1))
-            embed_dim = dim_out
-
-        for i in range(len(backbone_channel_list) - 1, 0, -1):
-            self.channel_gen.append((backbone_channel_list[i], backbone_channel_list[i - 1]))
-        self.channel_gen = self.channel_gen[1:]
-
-        self.pmd1 = PMD_features(backbone_channel_list[2]//4, backbone_channel_list[-1])
-        self.pmd2 = PMD_features(backbone_channel_list[1]//4, backbone_channel_list[-1])
-        self.pool = nn.MaxPool2d(2, 2)
-
         self.trunk = sam_encoder
+
+        if self.use_adaptor:
+            self.channel_gen = []
+            self.inc0 = nn.ModuleList()
+            for i in range(down_times - 1, -1, -1):
+                input_dim = 3 if i == down_times - 1 else backbone_channel_list[-1] // (2 ** (i + 1))
+                out_dim = backbone_channel_list[-1] // (2**i)
+                self.channel_gen.append((input_dim, out_dim))
+                self.inc0.append(_make_layer(_block, input_dim, out_dim))
+
+            self.incs = nn.ModuleList()
+            embed_dim = backbone_channel_list[-1]
+            for i in range(len(stages) - 1):
+                dim_out = embed_dim * 2
+                self.incs.append(_make_layer(_block, embed_dim, dim_out, num_blocks=1))
+                embed_dim = dim_out
+
+            for i in range(len(backbone_channel_list) - 1, 0, -1):
+                self.channel_gen.append((backbone_channel_list[i], backbone_channel_list[i - 1]))
+            self.channel_gen = self.channel_gen[1:]
+
+            self.pmd1 = PMD_features(backbone_channel_list[2]//4, backbone_channel_list[-1])
+            self.pmd2 = PMD_features(backbone_channel_list[1]//4, backbone_channel_list[-1])
+            self.pool = nn.MaxPool2d(2, 2)
+        else:
+            # Minimal projection neck: build the high-resolution dense skip
+            # features the decoder expects ([24, 48, 96] @ /1, /2, /4) purely
+            # from the finest frozen-trunk feature (96ch @ /4). No CNN adaptor,
+            # no PMD, no promote_genertor are used in this mode.
+            finest = backbone_channel_list[-1]  # 96
+            d1 = finest // 2  # 48
+            d0 = finest // 4  # 24
+            self.noadp_proj_d1 = nn.Conv2d(finest, d1, kernel_size=1, stride=1)
+            self.noadp_proj_d0 = nn.Conv2d(finest, d0, kernel_size=1, stride=1)
+            self.noadp_up2 = nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False)
+            self.noadp_up4 = nn.Upsample(scale_factor=4, mode="bilinear", align_corners=False)
 
     def _process_initial_layers(self, x: torch.Tensor):
         """Process initial layers and store outputs."""
@@ -68,7 +85,43 @@ class ImageEncoder(nn.Module):
         sam_out = ecd_embed(x)
         return sam_out + self.trunk._get_pos_embed(sam_out.shape[1:3])
 
+    def _forward_trunk_only(self, x: torch.Tensor):
+        """No-adaptor path: run the (frozen) trunk plainly and build decoder
+        inputs from its native multi-scale stage outputs via a minimal neck.
+
+        Returns the same dict schema as :meth:`forward`. ``clt_embeds`` is only
+        a placeholder here and is not consumed when ``use_alpha=False``.
+        """
+        ecd_embed = self.trunk.patch_embed
+        ecd_blocks = self.trunk.blocks
+
+        sam_out = ecd_embed(x)
+        sam_out = sam_out + self.trunk._get_pos_embed(sam_out.shape[1:3])
+
+        stage_feats = []  # channel-first stage-end features
+        for i, sam_block in enumerate(ecd_blocks):
+            sam_out = sam_block(sam_out)
+            if i in self.stage_ends:
+                stage_feats.append(sam_out.permute(0, 3, 1, 2).contiguous())
+
+        s1, s2, s3 = stage_feats[0], stage_feats[1], stage_feats[2]  # 96/192/384
+
+        # High-resolution dense skip features from the finest trunk feature.
+        d2 = s1                                              # 96 @ /4
+        d1 = self.noadp_proj_d1(self.noadp_up2(s1))          # 48 @ /2
+        d0 = self.noadp_proj_d0(self.noadp_up4(s1))          # 24 @ /1
+        dense_embeds = [d0, d1, d2]
+        sam_backbone_embeds = [s2, s3]
+
+        return {
+            "sam_backbone_embeds": sam_backbone_embeds,
+            "dense_embeds": dense_embeds,
+            "clt_embeds": [s1, s1],
+        }
+
     def forward(self, x: torch.tensor):
+        if not self.use_adaptor:
+            return self._forward_trunk_only(x)
         pmt_blocks = self.trunk.promote_genertor.blocks
         ecd_embed = self.trunk.patch_embed
         ecd_blocks = self.trunk.blocks
